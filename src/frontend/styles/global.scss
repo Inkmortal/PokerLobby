@@ -1,0 +1,380 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+:root {
+  // Catppuccin Mocha colors
+  --ctp-rosewater: #f5e0dc;
+  --ctp-flamingo: #f2cdcd;
+  --ctp-pink: #f5c2e7;
+  --ctp-mauve: #cba6f7;
+  --ctp-red: #f38ba8;
+  --ctp-maroon: #eba0ac;
+  --ctp-peach: #fab387;
+  --ctp-yellow: #f9e2af;
+  --ctp-green: #a6e3a1;
+  --ctp-teal: #94e2d5;
+  --ctp-sky: #89dceb;
+  --ctp-sapphire: #74c7ec;
+  --ctp-blue: #89b4fa;
+  --ctp-lavender: #b4befe;
+  --ctp-text: #cdd6f4;
+  --ctp-subtext1: #bac2de;
+  --ctp-subtext0: #a6adc8;
+  --ctp-overlay2: #9399b2;
+  --ctp-overlay1: #7f849c;
+  --ctp-overlay0: #6c7086;
+  --ctp-surface2: #585b70;
+  --ctp-surface1: #45475a;
+  --ctp-surface0: #313244;
+  --ctp-base: #1e1e2e;
+  --ctp-mantle: #181825;
+  --ctp-crust: #11111b;
+  
+  // Semantic mappings
+  --bg-primary: var(--ctp-base);
+  --bg-secondary: var(--ctp-mantle);
+  --bg-tertiary: var(--ctp-crust);
+  --bg-card: var(--ctp-surface0);
+  
+  --text-primary: var(--ctp-text);
+  --text-secondary: var(--ctp-subtext1);
+  --text-muted: var(--ctp-overlay1);
+  
+  --accent-green: var(--ctp-green);
+  --accent-blue: var(--ctp-blue);
+  --accent-red: var(--ctp-red);
+  --accent-yellow: var(--ctp-yellow);
+  --accent-teal: var(--ctp-teal);
+  --accent-mauve: var(--ctp-mauve);
+  
+  --border-primary: var(--ctp-surface1);
+  --border-secondary: var(--ctp-surface0);
+  
+  // Poker specific
+  --felt-green: linear-gradient(135deg, #313244 0%, #181825 100%);
+  --shadow-glow: 0 0 20px rgba(166, 227, 161, 0.15);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+// Custom scrollbar
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-tertiary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--text-muted);
+  border-radius: 4px;
+  
+  &:hover {
+    background: var(--text-secondary);
+  }
+}
+
+// Glass morphism
+.glass {
+  background: rgba(30, 30, 46, 0.6);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border-primary);
+}
+
+// Card component
+.card {
+  background: var(--bg-card);
+  border-radius: 12px;
+  border: 1px solid var(--border-primary);
+  padding: 1.5rem;
+  transition: all 0.3s ease;
+  
+  &:hover {
+    border-color: var(--accent-green);
+    box-shadow: var(--shadow-glow);
+  }
+}
+
+// Button styles
+.btn {
+  padding: 0.625rem 1.25rem;
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 0.875rem;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: none;
+  outline: none;
+  
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  
+  &-primary {
+    background: linear-gradient(135deg, var(--accent-green), var(--accent-emerald));
+    color: white;
+    
+    &:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(34, 197, 94, 0.3);
+    }
+  }
+  
+  &-secondary {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-primary);
+    
+    &:hover:not(:disabled) {
+      background: var(--bg-card);
+      border-color: var(--accent-green);
+    }
+  }
+  
+  &-outline {
+    background: transparent;
+    color: var(--accent-green);
+    border: 1px solid var(--accent-green);
+    
+    &:hover:not(:disabled) {
+      background: rgba(34, 197, 94, 0.1);
+    }
+  }
+}
+
+// Spacing utilities
+.container {
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 2rem;
+}
+
+.section {
+  margin-bottom: 3rem;
+}
+
+.content-spacing {
+  & > * + * {
+    margin-top: 1.5rem;
+  }
+}
+
+// Layout
+.app-layout {
+  display: flex;
+  height: 100vh;
+  background: var(--bg-primary);
+  
+  .sidebar {
+    width: 280px;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border-primary);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    
+    .logo {
+      padding: 1.5rem;
+      border-bottom: 1px solid var(--border-primary);
+      
+      h1 {
+        font-size: 1.5rem;
+        font-weight: 700;
+        background: linear-gradient(135deg, var(--accent-green), var(--accent-emerald));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+    }
+    
+    nav {
+      flex: 1;
+      padding: 1rem;
+      overflow-y: auto;
+      
+      .nav-item {
+        margin-bottom: 0.125rem;
+      }
+      
+      .nav-link {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.75rem 1rem;
+        border-radius: 8px;
+        color: var(--text-secondary);
+        text-decoration: none;
+        transition: all 0.2s ease;
+        background: transparent;
+        border: none;
+        width: 100%;
+        font-size: 0.875rem;
+        cursor: pointer;
+        
+        .nav-icon {
+          font-size: 1.125rem;
+          width: 1.5rem;
+          text-align: center;
+        }
+        
+        .nav-label {
+          flex: 1;
+          text-align: left;
+        }
+        
+        .nav-chevron {
+          font-size: 0.625rem;
+          color: var(--text-muted);
+        }
+        
+        &:hover {
+          background: var(--bg-tertiary);
+          color: var(--text-primary);
+        }
+        
+        &.active {
+          background: rgba(34, 197, 94, 0.1);
+          color: var(--accent-green);
+          border: 1px solid rgba(34, 197, 94, 0.2);
+        }
+      }
+      
+      .nav-children {
+        .nav-link {
+          font-size: 0.8125rem;
+        }
+      }
+    }
+    
+    .sidebar-footer {
+      padding: 1rem;
+      border-top: 1px solid var(--border-primary);
+      
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        
+        .status-indicator {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          
+          &.online {
+            background: var(--accent-green);
+            animation: pulse 2s infinite;
+          }
+        }
+      }
+    }
+    
+    .version {
+      display: block;
+      font-size: 0.625rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+  }
+  
+  .main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg-primary);
+    
+    .page-wrapper {
+      flex: 1;
+      overflow-y: auto;
+      padding: 3rem;
+      max-width: 1600px;
+      width: 100%;
+      margin: 0 auto;
+      
+      @media (max-width: 768px) {
+        padding: 2rem;
+      }
+    }
+    
+    .page-header {
+      margin-bottom: 3rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid var(--border-primary);
+      
+      h1 {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        margin-bottom: 0.5rem;
+      }
+      
+      p {
+        font-size: 1.125rem;
+        color: var(--text-secondary);
+      }
+    }
+    
+    .page-content {
+      animation: fadeIn 0.3s ease-out;
+    }
+  }
+}
+
+// Poker specific styles
+.poker-felt {
+  background: var(--felt-green);
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5);
+  border-radius: 100px;
+}
+
+.poker-card {
+  width: 60px;
+  height: 90px;
+  background: white;
+  border-radius: 6px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  font-weight: bold;
+  
+  &.red {
+    color: var(--accent-red);
+  }
+  
+  &.black {
+    color: var(--bg-primary);
+  }
+}
