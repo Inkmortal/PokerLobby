@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { RangeGrid } from './RangeGrid';
 import { TableSettings } from './TableSettings';
 import { ActionSequenceBar } from './ActionSequenceBar';
@@ -6,8 +6,9 @@ import { PaintToolbar } from './PaintToolbar';
 import { RangeStats } from './RangeStats';
 import { ImportExportModal } from './ImportExportModal';
 import { parseGTOWizardFormat, exportToGTOWizard } from './utils/formats/gtoWizard';
+import { GameTree, GameNode, PokerGameEngine } from './types/GameTree';
 
-export type Position = 'UTG' | 'MP' | 'CO' | 'BTN' | 'SB' | 'BB';
+export type Position = 'UTG' | 'UTG+1' | 'HJ' | 'LJ' | 'CO' | 'BTN' | 'SB' | 'BB';
 export type GameType = 'Cash' | 'MTT' | 'Spin & Go' | 'HU' | 'SnG';
 export type Action = 'raise' | 'call' | 'fold' | 'check' | 'bet' | 'allin';
 
@@ -60,6 +61,7 @@ export interface TableConfig {
   straddle?: boolean;
 }
 
+// Legacy ActionNode for ActionSequenceBar compatibility
 export interface ActionNode {
   position: Position;
   action: string;
@@ -75,7 +77,7 @@ interface RangeBuilderProps {
 export interface SavedRange {
   id: string;
   name: string;
-  actionSequence: ActionNode[];
+  gameTree: GameTree;
   tableConfig: TableConfig;
   rangeData: RangeData;
   rangeString: string;
@@ -127,12 +129,41 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
     }
   });
 
-  // Action sequence (builds as you select actions)
-  const [actionSequence, setActionSequence] = useState<ActionNode[]>([]);
-  const [currentNode, setCurrentNode] = useState<ActionNode | null>(null);
+  // Get positions based on table size
+  const getPositions = (): Position[] => {
+    switch (tableConfig.tableSize) {
+      case '6max': return ['HJ', 'LJ', 'CO', 'BTN', 'SB', 'BB'];
+      case '9max': return ['UTG', 'UTG+1', 'HJ', 'LJ', 'CO', 'BTN', 'SB', 'BB'];
+      case 'HU': return ['BTN', 'BB'];
+      default: return ['HJ', 'LJ', 'CO', 'BTN', 'SB', 'BB'];
+    }
+  };
+
+  // Game tree and engine
+  const [gameEngine] = useState(() => new PokerGameEngine(tableConfig, getPositions()));
+  const [gameTree, setGameTree] = useState<GameTree>(() => ({
+    root: gameEngine.createRootNode(),
+    currentNode: gameEngine.createRootNode(),
+    tableConfig,
+    positions: getPositions()
+  }));
   
-  // Range data
+  // Range data (from current node)
   const [rangeData, setRangeData] = useState<RangeData>({});
+
+  // Update game engine when table config changes
+  useEffect(() => {
+    const newPositions = getPositions();
+    const newEngine = new PokerGameEngine(tableConfig, newPositions);
+    const newTree: GameTree = {
+      root: newEngine.createRootNode(),
+      currentNode: newEngine.createRootNode(),
+      tableConfig,
+      positions: newPositions
+    };
+    setGameTree(newTree);
+    setRangeData({});
+  }, [tableConfig]);
   
   // UI state
   const [paintMode, setPaintMode] = useState<'select' | 'paint'>('select');
@@ -166,18 +197,128 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
   const percentages = calculateActionPercentages();
 
   const handleActionSelect = (position: Position, action: string, amount?: number) => {
-    const newNode: ActionNode = {
-      position,
-      action,
-      amount,
-      range: { ...rangeData }
-    };
+    console.log(`handleActionSelect called: ${position} ${action} ${amount || ''}`);
     
-    setActionSequence([...actionSequence, newNode]);
-    setCurrentNode(newNode);
-    // Clear range for new action
-    setRangeData({});
+    const positions = getPositions();
+    const currentPath = getActionSequenceFromPath();
+    const posIndex = positions.indexOf(position);
+    
+    // Create a set of positions that have already acted
+    const actedPositions = new Set(currentPath.map(node => node.position));
+    
+    // Check if we're trying to edit a past action
+    if (actedPositions.has(position)) {
+      console.log(`Editing past action for ${position}`);
+      
+      // Navigate back to the parent of this action and create a new branch
+      let targetNode = gameTree.root;
+      
+      // Find the index of this position in the current path
+      const existingActionIndex = currentPath.findIndex(node => node.position === position);
+      
+      // Replay actions up to (but not including) the position we're editing
+      for (let i = 0; i < existingActionIndex; i++) {
+        const step = currentPath[i];
+        const child = targetNode.children.find(
+          c => c.position === step.position && c.action === step.action && c.amount === step.amount
+        );
+        if (child) {
+          targetNode = child;
+        }
+      }
+      
+      // Now create or find the new action from this point
+      let newBranch = targetNode.children.find(
+        child => child.position === position && child.action === action && child.amount === amount
+      );
+      
+      if (!newBranch) {
+        newBranch = gameEngine.createChildNode(targetNode, position, action, amount);
+      }
+      
+      console.log(`Creating new branch: ${newBranch.id}`);
+      
+      setGameTree(prev => ({
+        ...prev,
+        currentNode: newBranch
+      }));
+      
+      setRangeData(newBranch.ranges[position] || {});
+      return;
+    }
+    
+    // Not editing - we're adding a new action
+    // Find positions that need to be filled (haven't acted and come before clicked position)
+    const positionsToFill: Position[] = [];
+    for (let i = 0; i < posIndex; i++) {
+      if (!actedPositions.has(positions[i])) {
+        positionsToFill.push(positions[i]);
+      }
+    }
+    
+    console.log(`Positions to fill: ${positionsToFill.join(', ')}`);
+    
+    // Start from current node
+    let currentNode = gameTree.currentNode;
+    
+    // Fill any gaps with folds
+    for (const gapPosition of positionsToFill) {
+      console.log(`Auto-folding ${gapPosition}`);
+      
+      // Check if fold node already exists
+      let foldNode = currentNode.children.find(
+        child => child.position === gapPosition && child.action === 'fold'
+      );
+      
+      if (!foldNode) {
+        foldNode = gameEngine.createChildNode(currentNode, gapPosition, 'fold');
+      }
+      
+      currentNode = foldNode;
+    }
+    
+    // Now add the actual clicked action
+    let targetNode = currentNode.children.find(
+      child => child.position === position && child.action === action && child.amount === amount
+    );
+    
+    if (!targetNode) {
+      targetNode = gameEngine.createChildNode(currentNode, position, action, amount);
+    }
+    
+    console.log(`Setting current node to: ${targetNode.id}`);
+    
+    // Update tree to final node
+    setGameTree(prev => ({
+      ...prev,
+      currentNode: targetNode
+    }));
+    
+    setRangeData(targetNode.ranges[position] || {});
   };
+
+  const handleNodeSelect = (targetNode: GameNode) => {
+    setGameTree(prev => ({
+      ...prev,
+      currentNode: targetNode
+    }));
+    
+    // Load the range for the position that acted at this node
+    const positionRange = targetNode.ranges[targetNode.position] || {};
+    setRangeData(positionRange);
+  };
+
+  // Update current node's range when range data changes
+  useEffect(() => {
+    if (gameTree.currentNode && gameTree.currentNode.position !== 'SB') {
+      const updatedRanges = {
+        ...gameTree.currentNode.ranges,
+        [gameTree.currentNode.position]: rangeData
+      };
+      
+      gameTree.currentNode.ranges = updatedRanges;
+    }
+  }, [rangeData]);
 
   const handleImport = (rangeString: string) => {
     const imported = parseGTOWizardFormat(rangeString);
@@ -185,11 +326,38 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
     setShowImportExport(false);
   };
 
+  // Convert current tree path to action sequence for display
+  const getActionSequenceFromPath = (): ActionNode[] => {
+    const sequence: ActionNode[] = [];
+    let current = gameTree.currentNode;
+    
+    // Walk back to root to build the path
+    const path: GameNode[] = [];
+    while (current && current.parent) {
+      path.unshift(current);
+      current = current.parent;
+    }
+    
+    // Convert to ActionNode format, filtering out the root node
+    const result = path.filter(node => node.action !== 'start').map(node => ({
+      position: node.position,
+      action: node.action,
+      amount: node.amount,
+      range: node.ranges[node.position] || {}
+    }));
+    
+    console.log(`getActionSequenceFromPath returning ${result.length} actions:`, result.map(n => `${n.position}:${n.action}`));
+    return result;
+  };
+
   const handleSave = () => {
+    const pathSequence = getActionSequenceFromPath();
     const savedRange: SavedRange = {
       id: `range_${Date.now()}`,
-      name: `${actionSequence.map(n => `${n.position} ${n.action}`).join(' → ')}`,
-      actionSequence,
+      name: pathSequence.length > 0 
+        ? `${pathSequence.map(n => `${n.position} ${n.action}`).join(' → ')}`
+        : 'Empty Range',
+      gameTree,
       tableConfig,
       rangeData,
       rangeString: exportToGTOWizard(rangeData),
@@ -201,10 +369,13 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
   };
 
   const handleUseInSolver = () => {
+    const pathSequence = getActionSequenceFromPath();
     const savedRange: SavedRange = {
       id: `range_${Date.now()}`,
-      name: `${actionSequence.map(n => `${n.position} ${n.action}`).join(' → ')}`,
-      actionSequence,
+      name: pathSequence.length > 0 
+        ? `${pathSequence.map(n => `${n.position} ${n.action}`).join(' → ')}`
+        : 'Empty Range',
+      gameTree,
       tableConfig,
       rangeData,
       rangeString: exportToGTOWizard(rangeData),
@@ -246,7 +417,7 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
             fontSize: '0.75rem',
             color: catppuccin.subtext0
           }}>
-            {tableConfig.gameType} • {tableConfig.tableSize} • {tableConfig.stackSize}BB
+            {tableConfig.gameType} • {tableConfig.tableSize} • Pot: {gameTree.currentNode.gameState.pot}BB • Stacks: {gameTree.currentNode.gameState.effectiveStacks}BB
           </span>
         </div>
         
@@ -293,10 +464,39 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
 
       {/* Action Sequence Bar */}
       <ActionSequenceBar
-        sequence={actionSequence}
-        currentNode={currentNode}
+        sequence={getActionSequenceFromPath()}
+        currentNode={gameTree.currentNode.parent ? {
+          position: gameTree.currentNode.position,
+          action: gameTree.currentNode.action,
+          amount: gameTree.currentNode.amount,
+          range: gameTree.currentNode.ranges[gameTree.currentNode.position] || {}
+        } : null}
         onActionSelect={handleActionSelect}
+        onPositionClick={(position: Position) => {
+          // Navigate to the node for this position if it exists
+          const pathSequence = getActionSequenceFromPath();
+          const nodeIndex = pathSequence.findIndex(node => node.position === position);
+          
+          if (nodeIndex >= 0) {
+            // Navigate to existing node
+            let targetNode = gameTree.root;
+            for (let i = 0; i <= nodeIndex; i++) {
+              const step = pathSequence[i];
+              const child = targetNode.children.find(
+                c => c.position === step.position && c.action === step.action && c.amount === step.amount
+              );
+              if (child) {
+                targetNode = child;
+              }
+            }
+            handleNodeSelect(targetNode);
+          }
+          // If position hasn't acted yet, just highlight it visually (handled by ActionSequenceBar)
+        }}
         tableSize={tableConfig.tableSize}
+        currentNodeIndex={getActionSequenceFromPath().length - 1}
+        tableConfig={tableConfig}
+        gameState={gameTree.currentNode.gameState}
       />
 
       {/* Main Content */}

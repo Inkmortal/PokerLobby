@@ -23,14 +23,6 @@ const catppuccin = {
   mauve: '#cba6f7'
 };
 
-// Preset bet size configurations
-const BET_SIZE_PRESETS = {
-  small: { flop: [25, 33, 50], turn: [33, 50, 75], river: [33, 50, 75] },
-  medium: { flop: [33, 50, 75], turn: [50, 75], river: [50, 75] },
-  large: { flop: [50, 75], turn: [75], river: [75] },
-  geometric: { flop: [30, 70], turn: [70], river: [70] },
-  exploitative: { flop: [25, 50, 75], turn: [50, 75], river: [50, 75, 150] }
-};
 
 export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, onClose }) => {
   const [activeTab, setActiveTab] = useState<'basic' | 'preflop' | 'postflop' | 'rake'>('basic');
@@ -39,6 +31,12 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
     turn: '',
     river: ''
   });
+  const [customOpenSize, setCustomOpenSize] = useState('');
+  const [customThreebet, setCustomThreebet] = useState('');
+  const [customFourbet, setCustomFourbet] = useState('');
+  const [customRakePercent, setCustomRakePercent] = useState('');
+  const [customRakeCap, setCustomRakeCap] = useState('');
+  const [customStackSize, setCustomStackSize] = useState('');
 
   const handleGameTypeChange = (gameType: GameType) => {
     onChange({ ...config, gameType });
@@ -73,9 +71,6 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
     onChange({ ...config, betSizes: newBetSizes });
   };
 
-  const applyPreset = (preset: keyof typeof BET_SIZE_PRESETS) => {
-    onChange({ ...config, betSizes: BET_SIZE_PRESETS[preset] });
-  };
 
   const formatBetSize = (size: number): string => {
     if (size >= 100) return 'All-in';
@@ -227,7 +222,10 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                 {[20, 50, 100, 200, 500].map(size => (
                   <button
                     key={size}
-                    onClick={() => handleStackSizeChange(size.toString())}
+                    onClick={() => {
+                      handleStackSizeChange(size.toString());
+                      setCustomStackSize('');
+                    }}
                     style={{
                       flex: 1,
                       padding: '0.5rem',
@@ -244,21 +242,63 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                   </button>
                 ))}
               </div>
-              <input
-                type="number"
-                value={config.stackSize}
-                onChange={(e) => handleStackSizeChange(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  background: catppuccin.mantle,
-                  color: catppuccin.text,
-                  border: `1px solid ${catppuccin.surface2}`,
-                  borderRadius: '8px',
-                  fontSize: '0.875rem'
-                }}
-                placeholder="Custom stack size..."
-              />
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <input
+                  type="number"
+                  placeholder="Custom stack (e.g., 150)"
+                  value={customStackSize}
+                  onChange={(e) => setCustomStackSize(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const value = parseFloat(customStackSize);
+                      if (value > 0) {
+                        handleStackSizeChange(value.toString());
+                      }
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '0.75rem',
+                    background: catppuccin.mantle,
+                    color: catppuccin.text,
+                    border: `1px solid ${catppuccin.surface2}`,
+                    borderRadius: '8px',
+                    fontSize: '0.875rem'
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    const value = parseFloat(customStackSize);
+                    if (value > 0) {
+                      handleStackSizeChange(value.toString());
+                    }
+                  }}
+                  style={{
+                    padding: '0.75rem 1rem',
+                    background: catppuccin.green,
+                    color: catppuccin.base,
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                    fontWeight: '500'
+                  }}
+                >
+                  Set
+                </button>
+              </div>
+              {!([20, 50, 100, 200, 500].includes(config.stackSize)) && (
+                <div style={{
+                  marginTop: '0.5rem',
+                  padding: '0.5rem',
+                  background: catppuccin.surface1,
+                  borderRadius: '6px',
+                  fontSize: '0.75rem',
+                  color: catppuccin.green
+                }}>
+                  ✓ Custom: {config.stackSize}BB
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -292,7 +332,10 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                 {[2, 2.2, 2.5, 3].map(size => (
                   <button
                     key={size}
-                    onClick={() => handlePreflopChange('openSize', size)}
+                    onClick={() => {
+                      handlePreflopChange('openSize', size);
+                      setCustomOpenSize('');
+                    }}
                     style={{
                       padding: '0.5rem',
                       background: config.preflop.openSize === size ? catppuccin.blue : catppuccin.surface1,
@@ -307,6 +350,64 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                   </button>
                 ))}
               </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <input
+                  type="number"
+                  step="0.1"
+                  placeholder="Custom (e.g., 2.3)"
+                  value={customOpenSize}
+                  onChange={(e) => setCustomOpenSize(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const value = parseFloat(customOpenSize);
+                      if (value > 0) {
+                        handlePreflopChange('openSize', value);
+                      }
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '0.5rem',
+                    background: catppuccin.mantle,
+                    color: catppuccin.text,
+                    border: `1px solid ${catppuccin.surface2}`,
+                    borderRadius: '6px',
+                    fontSize: '0.875rem'
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    const value = parseFloat(customOpenSize);
+                    if (value > 0) {
+                      handlePreflopChange('openSize', value);
+                    }
+                  }}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    background: catppuccin.green,
+                    color: catppuccin.base,
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                    fontWeight: '500'
+                  }}
+                >
+                  Set
+                </button>
+              </div>
+              {!([2, 2.2, 2.5, 3].includes(config.preflop.openSize)) && (
+                <div style={{
+                  marginTop: '0.5rem',
+                  padding: '0.5rem',
+                  background: catppuccin.surface1,
+                  borderRadius: '6px',
+                  fontSize: '0.75rem',
+                  color: catppuccin.green
+                }}>
+                  ✓ Custom: {config.preflop.openSize}x
+                </div>
+              )}
             </div>
 
             {/* 3-Bet Size */}
@@ -325,12 +426,16 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(4, 1fr)',
-                gap: '0.5rem'
+                gap: '0.5rem',
+                marginBottom: '0.5rem'
               }}>
                 {[3, 3.5, 4, 4.5].map(size => (
                   <button
                     key={size}
-                    onClick={() => handlePreflopChange('threebet', size)}
+                    onClick={() => {
+                      handlePreflopChange('threebet', size);
+                      setCustomThreebet('');
+                    }}
                     style={{
                       padding: '0.5rem',
                       background: config.preflop.threebet === size ? catppuccin.red : catppuccin.surface1,
@@ -345,6 +450,64 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                   </button>
                 ))}
               </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <input
+                  type="number"
+                  step="0.1"
+                  placeholder="Custom (e.g., 3.8)"
+                  value={customThreebet}
+                  onChange={(e) => setCustomThreebet(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const value = parseFloat(customThreebet);
+                      if (value > 0) {
+                        handlePreflopChange('threebet', value);
+                      }
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '0.5rem',
+                    background: catppuccin.mantle,
+                    color: catppuccin.text,
+                    border: `1px solid ${catppuccin.surface2}`,
+                    borderRadius: '6px',
+                    fontSize: '0.875rem'
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    const value = parseFloat(customThreebet);
+                    if (value > 0) {
+                      handlePreflopChange('threebet', value);
+                    }
+                  }}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    background: catppuccin.green,
+                    color: catppuccin.base,
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                    fontWeight: '500'
+                  }}
+                >
+                  Set
+                </button>
+              </div>
+              {!([3, 3.5, 4, 4.5].includes(config.preflop.threebet)) && (
+                <div style={{
+                  marginTop: '0.5rem',
+                  padding: '0.5rem',
+                  background: catppuccin.surface1,
+                  borderRadius: '6px',
+                  fontSize: '0.75rem',
+                  color: catppuccin.green
+                }}>
+                  ✓ Custom: {config.preflop.threebet}x
+                </div>
+              )}
             </div>
 
             {/* 4-Bet Size */}
@@ -363,12 +526,16 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(4, 1fr)',
-                gap: '0.5rem'
+                gap: '0.5rem',
+                marginBottom: '0.5rem'
               }}>
                 {[2.2, 2.5, 2.8, 3].map(size => (
                   <button
                     key={size}
-                    onClick={() => handlePreflopChange('fourbet', size)}
+                    onClick={() => {
+                      handlePreflopChange('fourbet', size);
+                      setCustomFourbet('');
+                    }}
                     style={{
                       padding: '0.5rem',
                       background: config.preflop.fourbet === size ? catppuccin.mauve : catppuccin.surface1,
@@ -383,6 +550,64 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                   </button>
                 ))}
               </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <input
+                  type="number"
+                  step="0.1"
+                  placeholder="Custom (e.g., 2.6)"
+                  value={customFourbet}
+                  onChange={(e) => setCustomFourbet(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const value = parseFloat(customFourbet);
+                      if (value > 0) {
+                        handlePreflopChange('fourbet', value);
+                      }
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '0.5rem',
+                    background: catppuccin.mantle,
+                    color: catppuccin.text,
+                    border: `1px solid ${catppuccin.surface2}`,
+                    borderRadius: '6px',
+                    fontSize: '0.875rem'
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    const value = parseFloat(customFourbet);
+                    if (value > 0) {
+                      handlePreflopChange('fourbet', value);
+                    }
+                  }}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    background: catppuccin.green,
+                    color: catppuccin.base,
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                    fontWeight: '500'
+                  }}
+                >
+                  Set
+                </button>
+              </div>
+              {!([2.2, 2.5, 2.8, 3].includes(config.preflop.fourbet)) && (
+                <div style={{
+                  marginTop: '0.5rem',
+                  padding: '0.5rem',
+                  background: catppuccin.surface1,
+                  borderRadius: '6px',
+                  fontSize: '0.75rem',
+                  color: catppuccin.green
+                }}>
+                  ✓ Custom: {config.preflop.fourbet}x
+                </div>
+              )}
             </div>
 
             {/* All-in Threshold */}
@@ -469,48 +694,6 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
         {/* Postflop Tab */}
         {activeTab === 'postflop' && (
           <div>
-            {/* Presets */}
-            <div style={{ marginBottom: '2rem' }}>
-              <label style={{
-                display: 'block',
-                fontSize: '0.875rem',
-                fontWeight: '600',
-                color: catppuccin.subtext0,
-                marginBottom: '0.75rem',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em'
-              }}>
-                Bet Size Presets
-              </label>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(5, 1fr)',
-                gap: '0.5rem'
-              }}>
-                {Object.keys(BET_SIZE_PRESETS).map(preset => (
-                  <button
-                    key={preset}
-                    onClick={() => applyPreset(preset as keyof typeof BET_SIZE_PRESETS)}
-                    style={{
-                      padding: '0.75rem',
-                      background: catppuccin.surface1,
-                      color: catppuccin.text,
-                      border: 'none',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      fontSize: '0.875rem',
-                      textTransform: 'capitalize',
-                      transition: 'all 0.2s'
-                    }}
-                    onMouseEnter={e => e.currentTarget.style.background = catppuccin.surface2}
-                    onMouseLeave={e => e.currentTarget.style.background = catppuccin.surface1}
-                  >
-                    {preset}
-                  </button>
-                ))}
-              </div>
-            </div>
-
             {/* Bet Sizes by Street */}
             <div style={{
               display: 'grid',
@@ -578,7 +761,7 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                     gap: '0.25rem',
                     marginBottom: '0.5rem'
                   }}>
-                    {[25, 33, 50, 75, 100, 150].map(size => (
+                    {[25, 33, 50, 75, 100, 125].map(size => (
                       <button
                         key={size}
                         onClick={() => addBetSize(street, size)}
@@ -683,10 +866,13 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                 {[0, 3, 5, 7.5, 10].map(percent => (
                   <button
                     key={percent}
-                    onClick={() => onChange({
-                      ...config,
-                      rake: { ...config.rake, percentage: percent }
-                    })}
+                    onClick={() => {
+                      onChange({
+                        ...config,
+                        rake: { ...config.rake, percentage: percent }
+                      });
+                      setCustomRakePercent('');
+                    }}
                     style={{
                       padding: '0.5rem',
                       background: config.rake.percentage === percent ? catppuccin.red : catppuccin.surface1,
@@ -701,6 +887,70 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                   </button>
                 ))}
               </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <input
+                  type="number"
+                  step="0.5"
+                  placeholder="Custom %"
+                  value={customRakePercent}
+                  onChange={(e) => setCustomRakePercent(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const value = parseFloat(customRakePercent);
+                      if (value >= 0) {
+                        onChange({
+                          ...config,
+                          rake: { ...config.rake, percentage: value }
+                        });
+                      }
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '0.5rem',
+                    background: catppuccin.mantle,
+                    color: catppuccin.text,
+                    border: `1px solid ${catppuccin.surface2}`,
+                    borderRadius: '6px',
+                    fontSize: '0.875rem'
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    const value = parseFloat(customRakePercent);
+                    if (value >= 0) {
+                      onChange({
+                        ...config,
+                        rake: { ...config.rake, percentage: value }
+                      });
+                    }
+                  }}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    background: catppuccin.green,
+                    color: catppuccin.base,
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                    fontWeight: '500'
+                  }}
+                >
+                  Set
+                </button>
+              </div>
+              {!([0, 3, 5, 7.5, 10].includes(config.rake.percentage)) && (
+                <div style={{
+                  marginTop: '0.5rem',
+                  padding: '0.5rem',
+                  background: catppuccin.surface1,
+                  borderRadius: '6px',
+                  fontSize: '0.75rem',
+                  color: catppuccin.green
+                }}>
+                  ✓ Custom: {config.rake.percentage}%
+                </div>
+              )}
             </div>
 
             {/* Rake Cap */}
@@ -725,10 +975,13 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                 {[0, 1, 3, 5, 10].map(cap => (
                   <button
                     key={cap}
-                    onClick={() => onChange({
-                      ...config,
-                      rake: { ...config.rake, cap }
-                    })}
+                    onClick={() => {
+                      onChange({
+                        ...config,
+                        rake: { ...config.rake, cap }
+                      });
+                      setCustomRakeCap('');
+                    }}
                     style={{
                       padding: '0.5rem',
                       background: config.rake.cap === cap ? catppuccin.red : catppuccin.surface1,
@@ -743,6 +996,70 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                   </button>
                 ))}
               </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <input
+                  type="number"
+                  step="0.5"
+                  placeholder="Custom BBs"
+                  value={customRakeCap}
+                  onChange={(e) => setCustomRakeCap(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const value = parseFloat(customRakeCap);
+                      if (value >= 0) {
+                        onChange({
+                          ...config,
+                          rake: { ...config.rake, cap: value }
+                        });
+                      }
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '0.5rem',
+                    background: catppuccin.mantle,
+                    color: catppuccin.text,
+                    border: `1px solid ${catppuccin.surface2}`,
+                    borderRadius: '6px',
+                    fontSize: '0.875rem'
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    const value = parseFloat(customRakeCap);
+                    if (value >= 0) {
+                      onChange({
+                        ...config,
+                        rake: { ...config.rake, cap: value }
+                      });
+                    }
+                  }}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    background: catppuccin.green,
+                    color: catppuccin.base,
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                    fontWeight: '500'
+                  }}
+                >
+                  Set
+                </button>
+              </div>
+              {!([0, 1, 3, 5, 10].includes(config.rake.cap)) && (
+                <div style={{
+                  marginTop: '0.5rem',
+                  padding: '0.5rem',
+                  background: catppuccin.surface1,
+                  borderRadius: '6px',
+                  fontSize: '0.75rem',
+                  color: catppuccin.green
+                }}>
+                  ✓ Custom: {config.rake.cap}BB
+                </div>
+              )}
             </div>
 
             {/* Rake Options */}
