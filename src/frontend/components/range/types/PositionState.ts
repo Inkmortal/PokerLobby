@@ -1,6 +1,7 @@
 import { Position, RangeData } from '../RangeBuilder';
 
 export interface PositionDisplayState {
+  index: number;  // Unique index for this card in the timeline
   position: Position;
   status: 'past' | 'current' | 'future' | 'inactive';
   selectedAction: string | null;

@@ -6,11 +6,13 @@ import { PaintToolbar } from './PaintToolbar';
 import { RangeStats } from './RangeStats';
 import { ImportExportModal } from './ImportExportModal';
 import { parseGTOWizardFormat, exportToGTOWizard } from './utils/formats/gtoWizard';
-import { GameTree, GameNode, PokerGameEngine } from './types/GameTree';
+import { GameTree, GameNode } from './types/GameTree';
+import { PokerGameEngine } from './engine/PokerGameEngine';
+import { ActionNode, Position as PokerPosition, ActionType, BettingRoundState } from './types/PokerState';
 
 export type Position = 'UTG' | 'UTG+1' | 'HJ' | 'LJ' | 'CO' | 'BTN' | 'SB' | 'BB';
 export type GameType = 'Cash' | 'MTT' | 'Spin & Go' | 'HU' | 'SnG';
-export type Action = 'raise' | 'call' | 'fold' | 'check' | 'bet' | 'allin';
+export type Action = 'open' | 'raise' | 'call' | 'fold' | 'check' | 'bet' | 'allin';
 
 export interface HandAction {
   raise: number;
@@ -140,13 +142,17 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
   };
 
   // Game tree and engine
-  const [gameEngine] = useState(() => new PokerGameEngine(tableConfig, getPositions()));
-  const [gameTree, setGameTree] = useState<GameTree>(() => ({
-    root: gameEngine.createRootNode(),
-    currentNode: gameEngine.createRootNode(),
-    tableConfig,
-    positions: getPositions()
-  }));
+  const [gameEngine] = useState(() => new PokerGameEngine(getPositions(), tableConfig));
+  const [gameTree, setGameTree] = useState<{
+    root: ActionNode;
+    currentNode: ActionNode;
+  }>(() => {
+    const root = gameEngine.createRootNode();
+    return {
+      root,
+      currentNode: root
+    };
+  });
   
   // Range data (from current node)
   const [rangeData, setRangeData] = useState<RangeData>({});
@@ -154,14 +160,12 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
   // Update game engine when table config changes
   useEffect(() => {
     const newPositions = getPositions();
-    const newEngine = new PokerGameEngine(tableConfig, newPositions);
-    const newTree: GameTree = {
-      root: newEngine.createRootNode(),
-      currentNode: newEngine.createRootNode(),
-      tableConfig,
-      positions: newPositions
-    };
-    setGameTree(newTree);
+    const newEngine = new PokerGameEngine(newPositions, tableConfig);
+    const rootNode = newEngine.createRootNode();
+    setGameTree({
+      root: rootNode,
+      currentNode: rootNode
+    });
     setRangeData({});
   }, [tableConfig]);
   
@@ -196,28 +200,22 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
 
   const percentages = calculateActionPercentages();
 
-  const handleActionSelect = (position: Position, action: string, amount?: number) => {
-    console.log(`handleActionSelect called: ${position} ${action} ${amount || ''}`);
+  const handleActionSelect = (position: Position, action: string, amount?: number, cardIndex?: number, status?: string) => {
+    console.log(`handleActionSelect called: ${position} ${action} ${amount || ''} index=${cardIndex} status=${status}`);
     
     const positions = getPositions();
     const currentPath = getActionSequenceFromPath();
     const posIndex = positions.indexOf(position);
     
-    // Create a set of positions that have already acted
-    const actedPositions = new Set(currentPath.map(node => node.position));
-    
-    // Check if we're trying to edit a past action
-    if (actedPositions.has(position)) {
-      console.log(`Editing past action for ${position}`);
+    // Check if we're trying to edit a past action based on status AND card index
+    if (status === 'past' && cardIndex !== undefined && cardIndex < currentPath.length) {
+      console.log(`Editing past action at card index ${cardIndex} for ${position}`);
       
-      // Navigate back to the parent of this action and create a new branch
+      // Navigate back to the parent of this specific action
       let targetNode = gameTree.root;
       
-      // Find the index of this position in the current path
-      const existingActionIndex = currentPath.findIndex(node => node.position === position);
-      
-      // Replay actions up to (but not including) the position we're editing
-      for (let i = 0; i < existingActionIndex; i++) {
+      // Replay actions up to (but not including) the card we're editing
+      for (let i = 0; i < cardIndex; i++) {
         const step = currentPath[i];
         const child = targetNode.children.find(
           c => c.position === step.position && c.action === step.action && c.amount === step.amount
@@ -233,7 +231,7 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
       );
       
       if (!newBranch) {
-        newBranch = gameEngine.createChildNode(targetNode, position, action, amount);
+        newBranch = gameEngine.createChildNode(targetNode, position, action as ActionType, amount);
       }
       
       console.log(`Creating new branch: ${newBranch.id}`);
@@ -248,11 +246,18 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
     }
     
     // Not editing - we're adding a new action
-    // Find positions that need to be filled (haven't acted and come before clicked position)
+    // Get players still to act from the game engine
+    const lastActor = currentPath.length > 0 ? 
+      currentPath[currentPath.length - 1].position : 
+      undefined;
+    const pendingPlayers = gameEngine.getPlayersStillToAct(currentBettingState, lastActor);
+    
+    // Find positions that need to be filled before the clicked position
     const positionsToFill: Position[] = [];
-    for (let i = 0; i < posIndex; i++) {
-      if (!actedPositions.has(positions[i])) {
-        positionsToFill.push(positions[i]);
+    const clickedIndex = pendingPlayers.indexOf(position);
+    if (clickedIndex > 0) {
+      for (let i = 0; i < clickedIndex; i++) {
+        positionsToFill.push(pendingPlayers[i]);
       }
     }
     
@@ -261,20 +266,32 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
     // Start from current node
     let currentNode = gameTree.currentNode;
     
-    // Fill any gaps with folds
+    // Fill gaps with smart check/fold defaults
     for (const gapPosition of positionsToFill) {
-      console.log(`Auto-folding ${gapPosition}`);
+      // Get the current state after the last action
+      const stateAfterLast = currentNode.action === 'start' ? 
+        currentNode.stateBefore : 
+        gameEngine.applyAction(currentNode.stateBefore, currentNode.position as Position, currentNode.action as ActionType, currentNode.amount);
       
-      // Check if fold node already exists
-      let foldNode = currentNode.children.find(
-        child => child.position === gapPosition && child.action === 'fold'
+      // Get available actions for this position
+      const availableActions = gameEngine.getAvailableActions(stateAfterLast, gapPosition);
+      
+      // Choose smart default: check if available, otherwise fold
+      const hasCheck = availableActions.some(a => a.action === 'check');
+      const defaultAction = hasCheck ? 'check' : 'fold';
+      
+      console.log(`Auto-${defaultAction}ing ${gapPosition}`);
+      
+      // Check if this default node already exists
+      let defaultNode = currentNode.children.find(
+        child => child.position === gapPosition && child.action === defaultAction
       );
       
-      if (!foldNode) {
-        foldNode = gameEngine.createChildNode(currentNode, gapPosition, 'fold');
+      if (!defaultNode) {
+        defaultNode = gameEngine.createChildNode(currentNode, gapPosition, defaultAction as ActionType);
       }
       
-      currentNode = foldNode;
+      currentNode = defaultNode;
     }
     
     // Now add the actual clicked action
@@ -283,7 +300,7 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
     );
     
     if (!targetNode) {
-      targetNode = gameEngine.createChildNode(currentNode, position, action, amount);
+      targetNode = gameEngine.createChildNode(currentNode, position, action as ActionType, amount);
     }
     
     console.log(`Setting current node to: ${targetNode.id}`);
@@ -297,7 +314,7 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
     setRangeData(targetNode.ranges[position] || {});
   };
 
-  const handleNodeSelect = (targetNode: GameNode) => {
+  const handleNodeSelect = (targetNode: ActionNode) => {
     setGameTree(prev => ({
       ...prev,
       currentNode: targetNode
@@ -332,19 +349,14 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
     let current = gameTree.currentNode;
     
     // Walk back to root to build the path
-    const path: GameNode[] = [];
+    const path: ActionNode[] = [];
     while (current && current.parent) {
       path.unshift(current);
       current = current.parent;
     }
     
-    // Convert to ActionNode format, filtering out the root node
-    const result = path.filter(node => node.action !== 'start').map(node => ({
-      position: node.position,
-      action: node.action,
-      amount: node.amount,
-      range: node.ranges[node.position] || {}
-    }));
+    // Filter out the root node (which has action 'start')
+    const result = path.filter(node => node.action !== 'start');
     
     console.log(`getActionSequenceFromPath returning ${result.length} actions:`, result.map(n => `${n.position}:${n.action}`));
     return result;
@@ -386,6 +398,20 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
     onUseInSolver?.(savedRange, tableConfig);
   };
 
+  // Calculate current betting state for display
+  const currentBettingState = (() => {
+    const currentNode = gameTree.currentNode;
+    if (currentNode.action === 'start') {
+      return currentNode.stateBefore;
+    }
+    return gameEngine.applyAction(
+      currentNode.stateBefore,
+      currentNode.position,
+      currentNode.action as ActionType,
+      currentNode.amount
+    );
+  })();
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -417,7 +443,7 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
             fontSize: '0.75rem',
             color: catppuccin.subtext0
           }}>
-            {tableConfig.gameType} • {tableConfig.tableSize} • Pot: {gameTree.currentNode.gameState.pot}BB • Stacks: {gameTree.currentNode.gameState.effectiveStacks}BB
+            {tableConfig.gameType} • {tableConfig.tableSize} • Pot: {currentBettingState.pot}BB • Stacks: {tableConfig.stackSize}BB
           </span>
         </div>
         
@@ -465,22 +491,18 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
       {/* Action Sequence Bar */}
       <ActionSequenceBar
         sequence={getActionSequenceFromPath()}
-        currentNode={gameTree.currentNode.parent ? {
-          position: gameTree.currentNode.position,
-          action: gameTree.currentNode.action,
-          amount: gameTree.currentNode.amount,
-          range: gameTree.currentNode.ranges[gameTree.currentNode.position] || {}
-        } : null}
+        currentBettingState={currentBettingState}
+        gameEngine={gameEngine}
         onActionSelect={handleActionSelect}
-        onPositionClick={(position: Position) => {
+        onPositionClick={(position: Position, cardIndex?: number) => {
           // Navigate to the node for this position if it exists
           const pathSequence = getActionSequenceFromPath();
-          const nodeIndex = pathSequence.findIndex(node => node.position === position);
           
-          if (nodeIndex >= 0) {
-            // Navigate to existing node
+          // Use the card index if provided to navigate to the exact card
+          if (cardIndex !== undefined && cardIndex < pathSequence.length) {
+            // Navigate to the specific node at this index
             let targetNode = gameTree.root;
-            for (let i = 0; i <= nodeIndex; i++) {
+            for (let i = 0; i <= cardIndex; i++) {
               const step = pathSequence[i];
               const child = targetNode.children.find(
                 c => c.position === step.position && c.action === step.action && c.amount === step.amount
@@ -494,9 +516,7 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
           // If position hasn't acted yet, just highlight it visually (handled by ActionSequenceBar)
         }}
         tableSize={tableConfig.tableSize}
-        currentNodeIndex={getActionSequenceFromPath().length - 1}
         tableConfig={tableConfig}
-        gameState={gameTree.currentNode.gameState}
       />
 
       {/* Main Content */}
