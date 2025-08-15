@@ -1,7 +1,7 @@
 import { RangeData } from '../RangeBuilder';
 
 export type Position = 'UTG' | 'UTG+1' | 'HJ' | 'LJ' | 'CO' | 'BTN' | 'SB' | 'BB';
-export type ActionType = 'fold' | 'check' | 'call' | 'open' | 'bet' | 'raise' | 'allin' | 'start';
+export type ActionType = 'fold' | 'check' | 'call' | 'open' | 'bet' | 'raise' | 'allin' | 'start' | 'advance';
 export type Street = 'preflop' | 'flop' | 'turn' | 'river';
 
 export interface PlayerAction {
@@ -47,6 +47,10 @@ export interface ActionNode {
   
   // Range data at this node
   ranges: { [position: string]: RangeData };
+  
+  // Board cards for this node (empty = wildcard/any board)
+  // These override the stateBefore.boardCards for range purposes
+  boardCards: string[];
   
   children: ActionNode[];
   parent: ActionNode | null;

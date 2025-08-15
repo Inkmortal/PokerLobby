@@ -12,11 +12,25 @@ import { SolverConfig } from '../TableSettings';
 
 export class PokerGameEngine {
   private positions: Position[];
+  private postflopPositions: Position[];
   private tableConfig: SolverConfig;
 
   constructor(positions: Position[], tableConfig: SolverConfig) {
     this.positions = positions;
     this.tableConfig = tableConfig;
+    
+    // Create postflop position order (clockwise from button)
+    // Start with SB, BB, then the rest in table order
+    this.postflopPositions = [];
+    if (positions.includes('SB')) this.postflopPositions.push('SB');
+    if (positions.includes('BB')) this.postflopPositions.push('BB');
+    
+    // Add remaining positions in order (excluding SB/BB which we already added)
+    for (const pos of positions) {
+      if (pos !== 'SB' && pos !== 'BB') {
+        this.postflopPositions.push(pos);
+      }
+    }
   }
 
   // Create initial game state
@@ -88,13 +102,16 @@ export class PokerGameEngine {
   public getPlayersStillToAct(state: BettingRoundState, lastActor?: Position): Position[] {
     const pending: Position[] = [];
     
+    // Use correct position order based on street
+    const positionOrder = state.street === 'preflop' ? this.positions : this.postflopPositions;
+    
     // Special case: no one has acted yet (start of hand)
     if (!lastActor) {
       // Preflop: start from first position after blinds (HJ in 6-max, UTG in 9-max)
       // Postflop: start from first position (SB if still in)
       if (state.street === 'preflop') {
         // Find first non-blind position and include all positions from there
-        for (const pos of this.positions) {
+        for (const pos of positionOrder) {
           if (pos !== 'SB' && pos !== 'BB') {
             const player = state.players.get(pos);
             if (player && !player.isFolded && !player.isAllIn) {
@@ -110,8 +127,8 @@ export class PokerGameEngine {
         
         // BB is NOT added initially - they only appear after someone acts
       } else {
-        // Postflop: action starts from earliest position
-        for (const pos of this.positions) {
+        // Postflop: action starts from earliest position (SB or next active player)
+        for (const pos of positionOrder) {
           const player = state.players.get(pos);
           if (player && !player.isFolded && !player.isAllIn) {
             pending.push(pos);
@@ -122,11 +139,11 @@ export class PokerGameEngine {
     }
     
     // Normal case: continue from last actor
-    const startIndex = this.positions.indexOf(lastActor);
+    const startIndex = positionOrder.indexOf(lastActor);
     
     // Check each position in order after the last actor
-    for (let i = 1; i <= this.positions.length; i++) {
-      const pos = this.positions[(startIndex + i) % this.positions.length];
+    for (let i = 1; i <= positionOrder.length; i++) {
+      const pos = positionOrder[(startIndex + i) % positionOrder.length];
       const player = state.players.get(pos);
       
       // Skip the last aggressor if we've come full circle and they don't need to act again
@@ -508,6 +525,7 @@ export class PokerGameEngine {
       stateBefore: initialState,
       availableActions: this.getAvailableActions(initialState, firstToAct),
       ranges: {},
+      boardCards: [], // Empty = wildcard board
       children: [],
       parent: null,
       depth: 0
@@ -534,6 +552,7 @@ export class PokerGameEngine {
       stateBefore: stateAfterParent,
       availableActions: this.getAvailableActions(stateAfterParent, position),
       ranges: { ...parent.ranges },
+      boardCards: action === 'advance' ? [] : [...parent.boardCards], // Advance nodes start with empty board
       children: [],
       parent,
       depth: parent.depth + 1

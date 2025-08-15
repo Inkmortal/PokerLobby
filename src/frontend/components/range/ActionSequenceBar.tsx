@@ -3,6 +3,7 @@ import { Position } from './RangeBuilder';
 import { PositionDisplayState } from './types/PositionState';
 import { ActionNode, BettingRoundState } from './types/PokerState';
 import { PokerGameEngine } from './engine/PokerGameEngine';
+import { BoardSelector } from './BoardSelector';
 
 interface ActionSequenceBarProps {
   sequence: ActionNode[];
@@ -10,6 +11,7 @@ interface ActionSequenceBarProps {
   gameEngine: PokerGameEngine;
   onActionSelect: (position: Position, action: string, amount?: number, cardIndex?: number, status?: string) => void;
   onPositionClick: (position: Position, cardIndex?: number) => void;
+  onBoardSelect?: (street: 'flop' | 'turn' | 'river', cards: string[]) => void;
   tableSize: '6max' | '9max' | 'HU';
   tableConfig: any;
 }
@@ -42,6 +44,7 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
   gameEngine,
   onActionSelect,
   onPositionClick,
+  onBoardSelect,
   tableSize,
   tableConfig
 }) => {
@@ -50,6 +53,12 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
     turn: '',
     river: ''
   });
+  
+  const [boardSelector, setBoardSelector] = useState<{
+    isOpen: boolean;
+    street: 'flop' | 'turn' | 'river' | null;
+    position: { x: number; y: number };
+  }>({ isOpen: false, street: null, position: { x: 0, y: 0 } });
 
   const positions = tableSize === '6max' ? POSITIONS_6MAX : 
                    tableSize === '9max' ? POSITIONS_9MAX : 
@@ -67,9 +76,54 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
     // Build display states array
     const states: PositionDisplayState[] = [];
     let cardIndex = 0;  // Unique index for each card
+    let lastStreet = 'preflop';
     
     // Process the action sequence - just read from saved states!
-    sequence.forEach((actionNode) => {
+    sequence.forEach((actionNode, idx) => {
+      // Special handling for advance nodes - create street separator
+      if (actionNode.action === 'advance') {
+        const currentStreet = actionNode.stateBefore.street;
+        states.push({
+          index: -1, // Special marker for street separator
+          position: 'SB' as Position, // Dummy position
+          status: 'separator' as any,
+          selectedAction: null,
+          selectedAmount: undefined,
+          availableActions: [],
+          gameState: {
+            pot: 0,
+            stack: 0
+          },
+          street: currentStreet, // Store which street this is
+          boardCards: actionNode.boardCards || [], // Board cards from the advance node
+          nodeId: actionNode.id // Store node ID for board click handling
+        } as any);
+        lastStreet = currentStreet;
+        return; // Skip adding this node as an action
+      }
+      
+      // For regular action nodes, check for street change (backwards compatibility)
+      const currentStreet = actionNode.stateBefore.street;
+      if (currentStreet !== lastStreet && actionNode.action !== 'advance') {
+        // This shouldn't happen with advance nodes, but keep for safety
+        states.push({
+          index: -1,
+          position: 'SB' as Position,
+          status: 'separator' as any,
+          selectedAction: null,
+          selectedAmount: undefined,
+          availableActions: [],
+          gameState: {
+            pot: 0,
+            stack: 0
+          },
+          street: currentStreet,
+          boardCards: [], // No board cards if no advance node
+          nodeId: actionNode.id
+        } as any);
+        lastStreet = currentStreet;
+      }
+      
       const playerBefore = actionNode.stateBefore.players.get(actionNode.position);
       if (!playerBefore) return;
 
@@ -96,11 +150,19 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
     
     if (!isBettingRoundComplete) {
       // Get all players who still need to act
-      const lastActor = sequence.length > 0 ? 
-        sequence[sequence.length - 1].position : 
+      // Filter out advance nodes when finding last actor
+      const nonAdvanceActions = sequence.filter(n => n.action !== 'advance');
+      const lastActor = nonAdvanceActions.length > 0 ? 
+        nonAdvanceActions[nonAdvanceActions.length - 1].position : 
         undefined;
       
-      const pendingPlayers = gameEngine.getPlayersStillToAct(currentBettingState, lastActor);
+      // Check if we're at the start of a new street
+      const isNewStreet = sequence.length > 0 && sequence[sequence.length - 1].action === 'advance';
+      
+      const pendingPlayers = gameEngine.getPlayersStillToAct(
+        currentBettingState, 
+        isNewStreet ? undefined : lastActor
+      );
 
       // Build cards for pending players
       pendingPlayers.forEach((pos, idx) => {
@@ -137,6 +199,22 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
   
   const handlePositionClick = (state: PositionDisplayState) => {
     onPositionClick(state.position, state.index);
+  };
+  
+  const handleBoardClick = (street: 'flop' | 'turn' | 'river', event: React.MouseEvent) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setBoardSelector({
+      isOpen: true,
+      street,
+      position: { x: rect.left, y: rect.bottom + 5 }
+    });
+  };
+  
+  const handleBoardSelect = (cards: string[]) => {
+    if (boardSelector.street && onBoardSelect) {
+      onBoardSelect(boardSelector.street, cards);
+    }
+    setBoardSelector({ isOpen: false, street: null, position: { x: 0, y: 0 } });
   };
 
   const getActionColor = (action: string) => {
@@ -176,6 +254,168 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
       }}>
         {/* Position columns */}
         {positionStates.map((state, index) => {
+          // Render street separator with board cards
+          if (state.status === 'separator') {
+            const streetState = state as any;
+            const boardCards = streetState.boardCards || [];
+            // Has cards if the array exists with proper length (including wildcards)
+            const expectedCards = streetState.street === 'flop' ? 3 : 1;
+            const hasCards = boardCards.length === expectedCards;
+            
+            // Determine number of card slots based on street
+            let cardSlots = 0;
+            if (streetState.street === 'flop') cardSlots = 3;
+            else if (streetState.street === 'turn') cardSlots = 1;
+            else if (streetState.street === 'river') cardSlots = 1;
+            
+            return (
+              <React.Fragment key={`street-${index}`}>
+                {/* Add vertical divider before street transition */}
+                <div
+                  style={{
+                    width: '2px',
+                    background: catppuccin.surface2,
+                    margin: '0 0.5rem',
+                    height: '100%'
+                  }}
+                />
+                
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    minWidth: '80px',
+                    background: catppuccin.mantle,
+                    border: `2px solid ${catppuccin.surface1}`,
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  onClick={(e) => {
+                    handleBoardClick(streetState.street.toLowerCase() as 'flop' | 'turn' | 'river', e);
+                  }}
+                >
+                {/* Street label */}
+                <div style={{
+                  padding: '0.25rem 0.5rem',
+                  background: catppuccin.surface0,
+                  borderBottom: `1px solid ${catppuccin.surface1}`,
+                  textAlign: 'center'
+                }}>
+                  <span style={{
+                    fontSize: '0.65rem',
+                    fontWeight: '600',
+                    color: catppuccin.blue,
+                    textTransform: 'uppercase'
+                  }}>
+                    {streetState.street}
+                  </span>
+                </div>
+                
+                {/* Cards area */}
+                <div style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '0.5rem',
+                  gap: '3px'
+                }}>
+                  {hasCards ? (
+                    // Show actual cards and wildcards
+                    boardCards.map((card: string, i: number) => {
+                      if (!card || card.length === 0) {
+                        // Show wildcard placeholder
+                        return (
+                          <div
+                            key={i}
+                            style={{
+                              background: catppuccin.surface0,
+                              border: `2px dashed ${catppuccin.surface2}`,
+                              borderRadius: '3px',
+                              padding: '0.3rem 0.4rem',
+                              minWidth: '28px',
+                              minHeight: '32px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                          >
+                            <span style={{
+                              color: catppuccin.overlay0,
+                              fontSize: '0.875rem'
+                            }}>?</span>
+                          </div>
+                        );
+                      }
+                      // Determine suit and color based on card string
+                      let suitColor = catppuccin.text;
+                      let bgColor = catppuccin.surface0;
+                      
+                      if (card.includes('♥')) {
+                        suitColor = '#ff0000';
+                        bgColor = '#ffe0e0';
+                      } else if (card.includes('♦')) {
+                        suitColor = '#0066ff';
+                        bgColor = '#e0e8ff';
+                      } else if (card.includes('♣')) {
+                        suitColor = '#00aa00';
+                        bgColor = '#e0ffe0';
+                      } else if (card.includes('♠')) {
+                        suitColor = '#000000';
+                        bgColor = '#e8e8e8';
+                      }
+                      
+                      return (
+                        <div
+                          key={i}
+                          style={{
+                            background: bgColor,
+                            border: `2px solid ${suitColor}`,
+                            borderRadius: '3px',
+                            padding: '0.3rem 0.4rem',
+                            fontFamily: 'monospace',
+                            fontSize: '1rem',
+                            fontWeight: 'bold',
+                            color: suitColor,
+                            minWidth: '28px',
+                            textAlign: 'center'
+                          }}
+                        >
+                          {card}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    // Show empty card placeholders
+                    Array.from({ length: cardSlots }).map((_, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          background: catppuccin.surface0,
+                          border: `1px dashed ${catppuccin.surface2}`,
+                          borderRadius: '3px',
+                          padding: '0.3rem 0.4rem',
+                          minWidth: '28px',
+                          minHeight: '32px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}
+                      >
+                        <span style={{
+                          color: catppuccin.overlay0,
+                          fontSize: '0.8rem'
+                        }}>?</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+              </React.Fragment>
+            );
+          }
+          
           const isCurrent = state.status === 'current';
           const isPast = state.status === 'past';
           const isFuture = state.status === 'future';
@@ -305,89 +545,6 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
           height: '100%'
         }} />
 
-        {/* Board cards sections */}
-        {['FLOP', 'TURN', 'RIVER'].map(street => (
-          <div key={street} style={{
-            display: 'flex',
-            flexDirection: 'column',
-            minWidth: '90px',
-            background: catppuccin.mantle,
-            border: `1px solid ${catppuccin.surface1}`,
-            borderRadius: '4px',
-            cursor: 'pointer'
-          }}
-          onClick={() => console.log(`Select ${street.toLowerCase()} cards`)}
-          >
-            <div style={{
-              padding: '0.5rem',
-              background: catppuccin.surface0,
-              borderBottom: `1px solid ${catppuccin.surface1}`,
-              textAlign: 'center'
-            }}>
-              <span style={{
-                fontSize: '0.875rem',
-                fontWeight: '600',
-                color: catppuccin.text
-              }}>
-                {street}
-              </span>
-              <div style={{
-                fontSize: '0.75rem',
-                color: catppuccin.subtext0,
-                marginTop: '2px'
-              }}>
-                {street === 'FLOP' ? '5.1' : '97.7'}
-              </div>
-            </div>
-            <div style={{
-              flex: 1,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '2px',
-              padding: '0.5rem'
-            }}>
-              {street === 'FLOP' ? [0, 1, 2].map(i => (
-                <div
-                  key={i}
-                  style={{
-                    width: '20px',
-                    height: '28px',
-                    background: boardCards.flop[i] ? catppuccin.text : catppuccin.surface2,
-                    color: boardCards.flop[i] ? catppuccin.base : catppuccin.overlay1,
-                    border: `1px solid ${catppuccin.surface2}`,
-                    borderRadius: '3px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '0.7rem',
-                    fontWeight: '600'
-                  }}
-                >
-                  {boardCards.flop[i] || '?'}
-                </div>
-              )) : (
-                <div
-                  style={{
-                    width: '20px',
-                    height: '28px',
-                    background: (street === 'TURN' ? boardCards.turn : boardCards.river) ? catppuccin.text : catppuccin.surface2,
-                    color: (street === 'TURN' ? boardCards.turn : boardCards.river) ? catppuccin.base : catppuccin.overlay1,
-                    border: `1px solid ${catppuccin.surface2}`,
-                    borderRadius: '3px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '0.7rem',
-                    fontWeight: '600'
-                  }}
-                >
-                  {(street === 'TURN' ? boardCards.turn : boardCards.river) || '?'}
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
       </div>
       
       {/* Custom scrollbar styles */}
@@ -433,6 +590,68 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
           }
         }
       `}</style>
+      
+      {/* Board Selector Modal */}
+      {boardSelector.isOpen && boardSelector.street && (
+        <BoardSelector
+          street={boardSelector.street}
+          existingCards={(() => {
+            // Find the advance node for this specific street
+            const streetNode = sequence.find(node => 
+              node.action === 'advance' && 
+              node.stateBefore.street === boardSelector.street
+            );
+            
+            // Get the board cards for this street
+            const streetCards = streetNode?.boardCards || [];
+            
+            // Also collect all OTHER board cards to prevent duplicates
+            const otherBoardCards: string[] = [];
+            sequence.forEach(node => {
+              if (node.action === 'advance' && 
+                  node.stateBefore.street !== boardSelector.street &&
+                  node.boardCards && node.boardCards.length > 0) {
+                node.boardCards.forEach(card => {
+                  if (!otherBoardCards.includes(card)) {
+                    otherBoardCards.push(card);
+                  }
+                });
+              }
+            });
+            
+            // Convert cards from "A♠" format to "As" format for BoardSelector
+            const convertCard = (card: string) => {
+              if (!card || card.length < 2) return '';
+              const rank = card[0];
+              let suit = '';
+              if (card.includes('♠')) suit = 's';
+              else if (card.includes('♥')) suit = 'h';
+              else if (card.includes('♦')) suit = 'd';
+              else if (card.includes('♣')) suit = 'c';
+              else return card; // Already in correct format
+              return rank + suit;
+            };
+            
+            const convertedStreetCards = streetCards.map(convertCard);
+            const convertedOtherCards = otherBoardCards.map(convertCard);
+            
+            // Put the street-specific cards first (up to maxCards)
+            // Then add padding with empty strings if needed
+            // Then add other cards for duplicate checking
+            const maxCards = boardSelector.street === 'flop' ? 3 : 1;
+            const paddedStreetCards = [...convertedStreetCards];
+            while (paddedStreetCards.length < maxCards) {
+              paddedStreetCards.push('');
+            }
+            
+            // Return: [street cards (padded to maxCards), other cards]
+            return [...paddedStreetCards, ...convertedOtherCards];
+          })()}
+          onSelect={handleBoardSelect}
+          onClose={() => setBoardSelector({ isOpen: false, street: null, position: { x: 0, y: 0 } })}
+          position={boardSelector.position}
+        />
+      )}
     </div>
   );
 };

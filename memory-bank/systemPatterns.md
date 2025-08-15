@@ -1,5 +1,43 @@
 # System Patterns
 
+## Betting Logic Implementation
+
+### Raise Counting System
+- **raiseCount** field tracks actual number of raises/bets per street
+- Preflop starts at 1 (blinds count as first bet)
+- Postflop starts at 0 (no bets yet)
+- Increments on any aggressive action (open, bet, raise, all-in if raising)
+- Used to determine what betting level comes next
+
+### Betting Level Mapping
+```
+Preflop:
+- raiseCount 1 → Next action is 2-bet (open)
+- raiseCount 2 → Next action is 3-bet
+- raiseCount 3 → Next action is 4-bet
+- raiseCount 4 → Next action is 5-bet
+- raiseCount 5+ → Next action is 6-bet+
+
+Postflop:
+- raiseCount 0 → Next action is bet
+- raiseCount 1 → Next action is raise (2-bet)
+- raiseCount 2 → Next action is 3-bet
+```
+
+### Solver Thresholds
+1. **addAllInThreshold** (default 150%)
+   - Adds all-in option when max bet/pot ratio < threshold
+   - Ensures all-in is available in large pot situations
+
+2. **forceAllInThreshold** (default 20%)
+   - Converts bets to all-in based on SPR after opponent calls
+   - Formula: SPR after call = remaining stack / new pot
+   - If SPR < threshold, replace bet with all-in
+
+3. **mergingThreshold** (default 10%)
+   - Merges similar bet sizes to reduce complexity
+   - Formula: (100 + X) / (100 + Y) < 1.0 + threshold
+
 ## Architecture Overview
 
 ```

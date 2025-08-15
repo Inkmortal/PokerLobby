@@ -213,49 +213,124 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
     const posIndex = positions.indexOf(position);
     
     // Check if we're trying to edit a past action based on status AND card index
-    if (status === 'past' && cardIndex !== undefined && cardIndex < currentPath.length) {
-      console.log(`Editing past action at card index ${cardIndex} for ${position}`);
+    if (status === 'past' && cardIndex !== undefined) {
+      // Filter out advance nodes to match the card indexing from ActionSequenceBar
+      const visibleActions = currentPath.filter(n => n.action !== 'advance');
       
-      // Navigate back to the parent of this specific action
-      let targetNode = gameTree.root;
-      
-      // Replay actions up to (but not including) the card we're editing
-      for (let i = 0; i < cardIndex; i++) {
-        const step = currentPath[i];
-        const child = targetNode.children.find(
-          c => c.position === step.position && c.action === step.action && c.amount === step.amount
+      if (cardIndex < visibleActions.length) {
+        console.log(`Editing past action at card index ${cardIndex} for ${position}`);
+        console.log('Current path:', currentPath.map(n => `${n.position}:${n.action}`));
+        console.log('Visible actions:', visibleActions.map(n => `${n.position}:${n.action}`));
+        
+        // Find the actual node we want to edit
+        const nodeToEdit = visibleActions[cardIndex];
+        console.log(`Node to edit: ${nodeToEdit.position}:${nodeToEdit.action}`);
+        
+        // Navigate back to the parent of this specific action
+        let targetNode = gameTree.root;
+        
+        // Replay ALL actions (including advances) up to but not including the one we're editing
+        for (let i = 0; i < currentPath.length; i++) {
+          const step = currentPath[i];
+          
+          // Stop when we reach the node we want to edit
+          if (step === nodeToEdit) {
+            break;
+          }
+          
+          const child = targetNode.children.find(
+            c => c.position === step.position && c.action === step.action && c.amount === step.amount
+          );
+          if (child) {
+            targetNode = child;
+          }
+        }
+        
+        // Now create or find the new action from this point
+        let newBranch = targetNode.children.find(
+          child => child.position === position && child.action === action && child.amount === amount
         );
-        if (child) {
-          targetNode = child;
+        
+        if (!newBranch) {
+          newBranch = gameEngine.createChildNode(targetNode, position, action as ActionType, amount);
+        }
+        
+        console.log(`Creating new branch: ${newBranch.id}`);
+        
+        // Check if this new action closes the betting round
+        const stateAfterNewAction = gameEngine.applyAction(
+          newBranch.stateBefore,
+          newBranch.position,
+          newBranch.action as ActionType,
+          newBranch.amount
+        );
+        
+        if (gameEngine.isBettingRoundOver(stateAfterNewAction) && stateAfterNewAction.street !== 'river') {
+          console.log(`New action closes betting round on ${stateAfterNewAction.street}, creating street advancement`);
+          
+          // Advance to next street
+          const nextStreetState = gameEngine.advanceToNextStreet(stateAfterNewAction);
+          
+          // Create a new node for the street transition
+          const streetNode = gameEngine.createChildNode(
+            newBranch,
+            newBranch.position,
+            'advance' as ActionType,
+            undefined
+          );
+          
+          // Override the state with the next street state
+          streetNode.stateBefore = nextStreetState;
+          
+          // Set current node to the street advancement node
+          setGameTree(prev => ({
+            ...prev,
+            currentNode: streetNode
+          }));
+          
+          setRangeData(streetNode.ranges[position] || {});
+        } else {
+          // Set current node to the new branch
+          setGameTree(prev => ({
+            ...prev,
+            currentNode: newBranch
+          }));
+          
+          setRangeData(newBranch.ranges[position] || {});
         }
       }
-      
-      // Now create or find the new action from this point
-      let newBranch = targetNode.children.find(
-        child => child.position === position && child.action === action && child.amount === amount
-      );
-      
-      if (!newBranch) {
-        newBranch = gameEngine.createChildNode(targetNode, position, action as ActionType, amount);
-      }
-      
-      console.log(`Creating new branch: ${newBranch.id}`);
-      
-      setGameTree(prev => ({
-        ...prev,
-        currentNode: newBranch
-      }));
-      
-      setRangeData(newBranch.ranges[position] || {});
       return;
     }
     
     // Not editing - we're adding a new action
     // Get players still to act from the game engine
-    const lastActor = currentPath.length > 0 ? 
-      currentPath[currentPath.length - 1].position : 
-      undefined;
+    
+    // Check if we're at the start of a new street (last node was 'advance')
+    const isNewStreet = currentPath.length > 0 && currentPath[currentPath.length - 1].action === 'advance';
+    
+    // Find last actor, but only from the current betting round
+    let lastActor: Position | undefined = undefined;
+    if (!isNewStreet) {
+      // Find the last non-advance action on the current street
+      for (let i = currentPath.length - 1; i >= 0; i--) {
+        const node = currentPath[i];
+        if (node.action !== 'advance' && node.action !== 'start') {
+          // Make sure this action is from the current street
+          if (node.stateBefore.street === currentBettingState.street) {
+            lastActor = node.position;
+            break;
+          }
+        }
+      }
+    }
+    
     const pendingPlayers = gameEngine.getPlayersStillToAct(currentBettingState, lastActor);
+    
+    console.log(`Current street: ${currentBettingState.street}`);
+    console.log(`Is new street: ${isNewStreet}`);
+    console.log(`Last actor: ${lastActor}`);
+    console.log(`Pending players: ${pendingPlayers.join(', ')}`);
+    console.log(`Clicked position: ${position}`);
     
     // Find positions that need to be filled before the clicked position
     const positionsToFill: Position[] = [];
@@ -310,13 +385,48 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
     
     console.log(`Setting current node to: ${targetNode.id}`);
     
-    // Update tree to final node
-    setGameTree(prev => ({
-      ...prev,
-      currentNode: targetNode
-    }));
+    // Check if betting round is complete after this action
+    const stateAfterAction = gameEngine.applyAction(
+      targetNode.stateBefore,
+      targetNode.position,
+      targetNode.action as ActionType,
+      targetNode.amount
+    );
     
-    setRangeData(targetNode.ranges[position] || {});
+    if (gameEngine.isBettingRoundOver(stateAfterAction) && stateAfterAction.street !== 'river') {
+      console.log(`Betting round complete on ${stateAfterAction.street}, advancing to next street`);
+      
+      // Advance to next street
+      const nextStreetState = gameEngine.advanceToNextStreet(stateAfterAction);
+      
+      // Create a new node for the street transition
+      // This node represents the start of the new street with wildcard board
+      const streetNode = gameEngine.createChildNode(
+        targetNode,
+        targetNode.position, // Use last actor's position
+        'advance' as ActionType, // Special action type for street transitions
+        undefined
+      );
+      
+      // Override the state with the next street state
+      streetNode.stateBefore = nextStreetState;
+      
+      // Update tree to the new street node
+      setGameTree(prev => ({
+        ...prev,
+        currentNode: streetNode
+      }));
+      
+      setRangeData(streetNode.ranges[targetNode.position] || {});
+    } else {
+      // Update tree to final node
+      setGameTree(prev => ({
+        ...prev,
+        currentNode: targetNode
+      }));
+      
+      setRangeData(targetNode.ranges[position] || {});
+    }
   };
 
   const handleNodeSelect = (targetNode: ActionNode) => {
@@ -519,6 +629,48 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
             handleNodeSelect(targetNode);
           }
           // If position hasn't acted yet, just highlight it visually (handled by ActionSequenceBar)
+        }}
+        onBoardSelect={(street: 'flop' | 'turn' | 'river', cards: string[]) => {
+          // Find the advance node for this specific street
+          const findStreetNode = (node: ActionNode, targetStreet: string): ActionNode | null => {
+            // Check if this is the advance node for the target street
+            if (node.action === 'advance' && node.stateBefore.street === targetStreet) {
+              return node;
+            }
+            
+            // Search children recursively
+            for (const child of node.children) {
+              const found = findStreetNode(child, targetStreet);
+              if (found) return found;
+            }
+            
+            return null;
+          };
+          
+          const streetNode = findStreetNode(gameTree.root, street);
+          
+          if (streetNode) {
+            // Cards come in "As" format, convert to "A♠" format for display
+            // Keep empty strings as wildcards
+            const convertedCards = cards.map(card => {
+              if (!card || card.length < 2) return ''; // Empty string = wildcard
+              const rank = card[0].toUpperCase();
+              const suit = card[1].toLowerCase();
+              let suitSymbol = '';
+              if (suit === 's') suitSymbol = '♠';
+              else if (suit === 'h') suitSymbol = '♥';
+              else if (suit === 'd') suitSymbol = '♦';
+              else if (suit === 'c') suitSymbol = '♣';
+              return rank + suitSymbol;
+            });
+            
+            // Store the full array with empty strings for wildcards
+            // This is important for range calculations
+            streetNode.boardCards = convertedCards;
+            
+            // Trigger re-render
+            setGameTree(prev => ({ ...prev }));
+          }
         }}
         tableSize={tableConfig.tableSize}
         tableConfig={tableConfig}

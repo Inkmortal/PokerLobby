@@ -1,7 +1,7 @@
 # Active Context
 
 ## Current Focus
-Solver integration complete! Ready to compile native module and build the UI. The solver engine is fully integrated with native Node.js bindings for maximum performance.
+Range Builder betting logic complete! All betting levels (2-bet through 6-bet+) working correctly with proper raise counting. Table settings fully integrated with game engine. Ready to add range persistence and postflop functionality.
 
 ## Technology Decisions Made
 - **Frontend**: React + TypeScript (chosen for AI coding efficiency and mature ecosystem)
@@ -87,6 +87,22 @@ Solver integration complete! Ready to compile native module and build the UI. Th
 
 ## Current Blockers
 None - solver code integrated, ready to compile and build UI
+
+## Recent Progress (2025-08-15)
+- **COMPLETE**: Fixed all betting logic bugs
+  - Proper raise counting system (raiseCount field)
+  - All-in appears correctly for 6-bet+ situations
+  - SPR-based forceAllInThreshold implementation
+  - Call option shows when call amount exceeds stack
+  - No more duplicate all-ins
+- **COMPLETE**: Table settings integration
+  - Settings changes now update game engine in real-time
+  - Position-specific overrides working
+  - Solver thresholds (add/force all-in, merging) implemented
+- **COMPLETE**: UI improvements
+  - Removed drag scrolling from ActionSequenceBar
+  - Added beautiful custom scrollbar with hover states
+  - Smooth scrolling with visual feedback
 
 ## Recent Progress (2025-08-13)
 - Created unified codebase architecture

@@ -1,9 +1,9 @@
 # Progress
 
 ## Current Status
-**Project Phase**: Range Builder Implementation - Core Mechanics Complete
+**Project Phase**: Range Builder Implementation - Betting Logic Complete
 **Date Started**: 2025-08-13
-**Last Updated**: 2025-08-14
+**Last Updated**: 2025-08-15
 
 ## What Works
 
@@ -14,16 +14,19 @@
 - **Native solver module COMPILED and TESTED** - Successfully solving poker games
 - **Electron IPC handlers implemented** - Full solver integration with main process
 
-### Range Builder (Partially Complete)
-- **Action Sequence Timeline** - Visual poker decision tree with drag navigation
+### Range Builder (90% Complete)
+- **Action Sequence Timeline** - Visual poker decision tree with custom scrollbar
 - **Dynamic Position Cards** - Shows available actions for each position
 - **Smart Gap-Filling** - Auto check/fold for skipped positions
 - **Multi-Betting Cycles** - Supports unlimited betting rounds
 - **Index-Based Card System** - Proper tracking of multiple actions per position
 - **BB Special Logic** - BB only appears when someone limps/raises
-- **Proper Betting Logic** - All-in handling, stack-aware betting options
+- **Complete Betting Logic** - All raise levels (2-bet through 6-bet+), proper all-in handling
 - **Paint Tool** - Working range frequency painting
-- **Table Settings UI** - Complete settings panel (but not integrated)
+- **Table Settings UI** - FULLY INTEGRATED with game engine
+- **Solver Thresholds** - SPR-based forceAllInThreshold, addAllInThreshold, mergingThreshold
+- **Position-Specific Settings** - Override sizing per position with inheritance
+- **Raise Counting System** - Accurate tracking of betting levels (raiseCount)
 
 ## What's Been Built
 
@@ -55,13 +58,14 @@
 ## What Doesn't Work Yet
 
 ### Critical Missing Features
-1. **Table Settings Integration** - Settings exist but don't affect game simulation
+1. ~~**Table Settings Integration**~~ ✅ FIXED - Settings now fully integrated with engine
 2. **Range Persistence** - Ranges don't save between actions or sessions
 3. **Range Initialization Sliders** - Were removed, need to be restored
 4. **Position Selection** - Can't click position to view/edit range without selecting action
 5. **Postflop Continuation** - Stops at preflop, doesn't continue to flop/turn/river
 6. **Board Cards** - No way to select flop/turn/river cards
 7. **Range Library** - No connection between tree and range library system
+8. **Tree Import/Export** - No UI buttons for importing/exporting game trees
 
 ### Known Issues
 - Range data at nodes isn't properly propagated through tree
