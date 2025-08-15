@@ -9,8 +9,10 @@ interface ActionSequenceBarProps {
   sequence: ActionNode[];
   currentBettingState: BettingRoundState;
   gameEngine: PokerGameEngine;
-  onActionSelect: (position: Position, action: string, amount?: number, cardIndex?: number, status?: string) => void;
-  onPositionClick: (position: Position, cardIndex?: number) => void;
+  selectedNode?: ActionNode;  // The node whose range is currently being viewed
+  currentNode?: ActionNode;   // The current node in the tree building
+  onActionSelect: (position: Position, action: string, amount?: number, cardIndex?: number, status?: string, isViewOnly?: boolean) => void;
+  onPositionClick: (position: Position, cardIndex?: number, isCurrentNode?: boolean) => void;
   onBoardSelect?: (street: 'flop' | 'turn' | 'river', cards: string[]) => void;
   tableSize: '6max' | '9max' | 'HU';
   tableConfig: any;
@@ -42,6 +44,8 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
   sequence,
   currentBettingState,
   gameEngine,
+  selectedNode,
+  currentNode,
   onActionSelect,
   onPositionClick,
   onBoardSelect,
@@ -194,11 +198,25 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
   }, [sequence, positions, tableConfig]);
 
   const handleActionClick = (state: PositionDisplayState, action: string, amount?: number) => {
-    onActionSelect(state.position, action, amount, state.index, state.status);
+    // When clicking an action button, it's an edit (not view-only)
+    onActionSelect(state.position, action, amount, state.index, state.status, false);
   };
   
   const handlePositionClick = (state: PositionDisplayState) => {
-    onPositionClick(state.position, state.index);
+    // Don't allow clicking on future nodes (can't select what hasn't happened yet)
+    if (state.status === 'future') {
+      return;
+    }
+    
+    // When clicking a past action card (not on a button), it's view-only
+    if (state.status === 'past' && state.selectedAction) {
+      // Call onActionSelect with isViewOnly = true to just view the range
+      onActionSelect(state.position, state.selectedAction, state.selectedAmount, state.index, state.status, true);
+    } else if (state.status === 'current') {
+      // Clicking on the current node should select it to view its range
+      // Pass a special flag to indicate we want to select the current node
+      onPositionClick(state.position, state.index, true);
+    }
   };
   
   const handleBoardClick = (street: 'flop' | 'turn' | 'river', event: React.MouseEvent) => {
@@ -420,6 +438,32 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
           const isPast = state.status === 'past';
           const isFuture = state.status === 'future';
           
+          // Check if this card represents the selected node
+          const visibleNodes = sequence.filter(n => n.action !== 'advance');
+          const cardNode = visibleNodes[state.index];
+          const isSelectedNode = selectedNode && cardNode && cardNode.id === selectedNode.id;
+          
+          // Determine background and border colors
+          let bgColor = catppuccin.mantle;
+          let borderColor = catppuccin.surface1;
+          
+          // Only show purple highlight when viewing a PAST node's range
+          // If selected node is the current node, just show blue
+          const showPurpleSelection = isSelectedNode && selectedNode?.id !== currentNode?.id;
+          
+          if (isCurrent) {
+            // Latest decision in the tree - blue highlight
+            bgColor = catppuccin.blue + '20';
+            borderColor = catppuccin.blue;
+          } else if (showPurpleSelection) {
+            // Viewing a past node's range - mauve highlight
+            bgColor = catppuccin.mauve + '30';
+            borderColor = catppuccin.mauve;
+          } else if (isPast && state.selectedAction) {
+            // Past action that was taken
+            borderColor = catppuccin.surface2;
+          }
+          
           return (
             <div
               key={`${state.position}-${index}`}
@@ -427,12 +471,8 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
                 display: 'flex',
                 flexDirection: 'column',
                 minWidth: '75px',
-                background: isCurrent ? catppuccin.blue + '20' : 
-                           isPast ? catppuccin.mantle : 
-                           catppuccin.mantle,
-                border: `2px solid ${isCurrent ? catppuccin.blue : 
-                        isPast && state.selectedAction ? catppuccin.surface2 : 
-                        catppuccin.surface1}`,
+                background: bgColor,
+                border: `2px solid ${borderColor}`,
                 borderRadius: '4px',
                 cursor: 'pointer',
                 opacity: state.status === 'inactive' ? 0.5 : 1,
@@ -455,7 +495,8 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
                 <span style={{
                   fontSize: '0.7rem',
                   fontWeight: '600',
-                  color: isCurrent ? catppuccin.blue : 
+                  color: showPurpleSelection ? catppuccin.mauve :
+                         isCurrent ? catppuccin.blue : 
                          isPast ? catppuccin.text : 
                          catppuccin.subtext0
                 }}>
