@@ -29,54 +29,54 @@ export const Home: React.FC = () => {
 
   const features = [
     {
-      title: 'Postflop Solver',
-      description: 'Quick and easy solver to help you understand optimal play',
+      title: 'Learn the Basics',
+      description: 'Start with simple concepts and gradually build your poker knowledge',
       icon: 'solver' as const,
       link: '/solver/postflop',
       gradient: `linear-gradient(135deg, ${catppuccin.green}, ${catppuccin.teal})`,
-      stats: 'Fast & Simple'
+      stats: 'Start Here'
     },
     {
-      title: 'Range Builder',
-      description: 'Visual tools to build and explore different hand ranges',
+      title: 'Build Your Ranges',
+      description: 'Understand which hands to play and when - made simple and visual',
       icon: 'range' as const,
       link: '/solver/ranges',
       gradient: `linear-gradient(135deg, ${catppuccin.blue}, ${catppuccin.sapphire})`,
-      stats: 'Easy to Use'
+      stats: 'Visual Tools'
     },
     {
-      title: 'Practice Mode',
-      description: 'Learn by playing against solved strategies at your own pace',
+      title: 'Practice & Play',
+      description: 'Apply what you learned in a fun, no-pressure environment',
       icon: 'practice' as const,
       link: '/training/practice',
       gradient: `linear-gradient(135deg, ${catppuccin.mauve}, ${catppuccin.blue})`,
-      stats: 'Learn & Improve'
+      stats: 'Have Fun'
     }
   ];
 
   const quickStats = [
     { 
-      value: 'Free', 
-      label: 'Forever', 
-      sublabel: 'no subscriptions',
+      value: 'Beginner', 
+      label: 'Friendly', 
+      sublabel: 'made for learners',
       color: catppuccin.green 
     },
     { 
-      value: 'Fast', 
-      label: 'Solving', 
-      sublabel: 'quick results',
+      value: 'Simple', 
+      label: 'Interface', 
+      sublabel: 'no complexity',
       color: catppuccin.blue 
     },
     { 
-      value: 'Easy', 
-      label: 'To Use', 
-      sublabel: 'simple interface',
+      value: 'Visual', 
+      label: 'Learning', 
+      sublabel: 'see your plays',
       color: catppuccin.mauve 
     },
     { 
-      value: 'Fun', 
-      label: 'Learning', 
-      sublabel: 'enjoy the journey',
+      value: 'Affordable', 
+      label: 'Pricing', 
+      sublabel: 'worth the investment',
       color: catppuccin.yellow 
     }
   ];
@@ -124,10 +124,10 @@ export const Home: React.FC = () => {
             fontSize: '1.5rem',
             color: catppuccin.subtext0,
             marginBottom: '3rem',
-            maxWidth: '600px',
+            maxWidth: '700px',
             margin: '0 auto 3rem'
           }}>
-            Your friendly poker training companion with all the tools you need
+            The casual way to learn poker strategy - perfect for beginners and improving players
           </p>
 
           <div style={{
@@ -354,18 +354,18 @@ export const Home: React.FC = () => {
             {[
               {
                 step: '01',
-                title: 'Configure Game',
-                description: 'Set stack sizes, ranges, and board texture'
+                title: 'Pick a Scenario',
+                description: 'Choose a common poker situation to explore'
               },
               {
                 step: '02',
-                title: 'Run Solver',
-                description: 'Get GTO solutions in under 2 seconds'
+                title: 'See the Strategy',
+                description: 'Visual guides show you what to do and why'
               },
               {
                 step: '03',
-                title: 'Analyze & Train',
-                description: 'Study strategies and practice implementation'
+                title: 'Practice & Learn',
+                description: 'Try it yourself with friendly feedback'
               }
             ].map((item, i) => (
               <div key={i}>
@@ -400,7 +400,7 @@ export const Home: React.FC = () => {
         </div>
       </section>
 
-      {/* Performance Section */}
+      {/* Why PokerLobby Section */}
       <section style={{
         padding: '4rem 3rem',
         background: catppuccin.base
@@ -420,7 +420,7 @@ export const Home: React.FC = () => {
               color: catppuccin.text,
               marginBottom: '1.5rem'
             }}>
-              Built for Performance
+              Why We Built This
             </h2>
             <p style={{
               fontSize: '1.125rem',
@@ -428,16 +428,16 @@ export const Home: React.FC = () => {
               marginBottom: '2rem',
               lineHeight: '1.6'
             }}>
-              Native Rust solver compiled to machine code delivers unmatched speed. 
-              No cloud dependency, no subscription fees, just pure performance on your machine.
+              We wanted to learn poker strategy without getting overwhelmed. Most tools are made for pros - 
+              PokerLobby is made for the rest of us who just want to get better at the game we love.
             </p>
             
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {[
-                { label: 'Native Performance', value: '20% faster than WASM' },
-                { label: 'Memory Efficient', value: 'Optimized data structures' },
-                { label: 'Parallel Processing', value: 'Multi-threaded solving' },
-                { label: 'Instant Save/Load', value: 'Binary serialization' }
+                { label: 'Learn at Your Pace', value: 'No pressure, no rush' },
+                { label: 'Visual Learning', value: 'See strategies, not just numbers' },
+                { label: 'Beginner Focus', value: 'Start simple, grow from there' },
+                { label: 'Actually Fun', value: 'Enjoy the learning process' }
               ].map((item, i) => (
                 <div key={i} style={{
                   display: 'flex',
@@ -476,40 +476,44 @@ export const Home: React.FC = () => {
             border: `1px solid ${catppuccin.surface1}`
           }}>
             <div style={{
-              fontFamily: 'monospace',
-              fontSize: '0.875rem',
-              color: catppuccin.subtext0
+              fontSize: '1.125rem',
+              color: catppuccin.text,
+              fontWeight: '600',
+              marginBottom: '1.5rem'
             }}>
-              <div style={{ color: catppuccin.overlay1, marginBottom: '0.5rem' }}>
-                // Solver Performance
-              </div>
-              <div>
-                <span style={{ color: catppuccin.blue }}>const</span>
-                <span style={{ color: catppuccin.text }}> solver = </span>
-                <span style={{ color: catppuccin.blue }}>new</span>
-                <span style={{ color: catppuccin.yellow }}> NativeSolver</span>
-                <span style={{ color: catppuccin.text }}>(); </span>
-              </div>
-              <div style={{ marginTop: '1rem' }}>
-                <span style={{ color: catppuccin.text }}>solver.</span>
-                <span style={{ color: catppuccin.green }}>initGame</span>
-                <span style={{ color: catppuccin.text }}>(config);</span>
-              </div>
-              <div>
-                <span style={{ color: catppuccin.text }}>solver.</span>
-                <span style={{ color: catppuccin.green }}>solve</span>
-                <span style={{ color: catppuccin.text }}>(</span>
-                <span style={{ color: catppuccin.peach }}>1000</span>
-                <span style={{ color: catppuccin.text }}>, </span>
-                <span style={{ color: catppuccin.peach }}>0.5</span>
-                <span style={{ color: catppuccin.text }}>);</span>
-              </div>
-              <div style={{ marginTop: '1rem' }}>
-                <span style={{ color: catppuccin.overlay1 }}>// Exploitability: 2.497</span>
-              </div>
-              <div>
-                <span style={{ color: catppuccin.overlay1 }}>// Time: 1.8 seconds</span>
-              </div>
+              Perfect For:
+            </div>
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '1rem'
+            }}>
+              {[
+                '🎮 Casual players wanting to improve',
+                '📚 Visual learners who like to see concepts',
+                '🎯 People who want focused practice',
+                '💡 Anyone curious about poker strategy',
+                '🌱 Complete beginners welcome!'
+              ].map((item, i) => (
+                <div key={i} style={{
+                  color: catppuccin.subtext0,
+                  fontSize: '0.95rem',
+                  lineHeight: '1.5'
+                }}>
+                  {item}
+                </div>
+              ))}
+            </div>
+            <div style={{
+              marginTop: '2rem',
+              padding: '1rem',
+              background: catppuccin.mantle,
+              borderRadius: '8px',
+              fontSize: '0.875rem',
+              color: catppuccin.overlay1,
+              textAlign: 'center'
+            }}>
+              No poker jargon required - we explain everything
             </div>
           </div>
         </div>

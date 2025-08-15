@@ -1,9 +1,106 @@
 import React, { useState } from 'react';
-import { TableConfig, GameType } from './RangeBuilder';
+import { Position } from './types/PokerState';
+import { Tooltip, InfoIcon } from './Tooltip';
+
+export type GameType = 'Cash' | 'MTT' | 'Spin & Go' | 'HU' | 'SnG';
+
+// Enhanced configuration with position-specific settings
+export interface SolverConfig {
+  gameType: GameType;
+  format: 'Classic' | 'Progressive' | 'PKO';
+  tableSize: '6max' | '9max' | 'HU';
+  stackSize: number; // in BBs
+  
+  // Preflop configuration with position overrides
+  preflop: {
+    // Default settings for all positions
+    all: {
+      openSizes: number[]; // Multiple open sizes in BBs
+      threeBet: number[]; // 3-bet multipliers
+      fourBet: {
+        sizes: number[]; // 4-bet multipliers
+        useAllIn: boolean;
+      };
+      fiveBet: {
+        sizes: number[];
+        useAllIn: boolean;
+        allInThreshold?: number; // Auto all-in if stack < this
+      };
+      allowLimping: boolean;
+    };
+    // Position-specific overrides
+    overrides?: {
+      [key in Position]?: {
+        openSizes?: number[];
+        threeBet?: number[];
+        fourBet?: {
+          sizes?: number[];
+          useAllIn?: boolean;
+        };
+        fiveBet?: {
+          sizes?: number[];
+          useAllIn?: boolean;
+          allInThreshold?: number;
+        };
+        allowLimping?: boolean;
+      };
+    };
+  };
+  
+  // Postflop bet and raise sizes
+  postflop: {
+    flop: {
+      oopBetSizes: number[]; // OOP bet sizes % of pot
+      ipBetSizes: number[]; // IP bet sizes % of pot
+      oopRaiseSizes: number[]; // OOP raise multipliers
+      ipRaiseSizes: number[]; // IP raise multipliers
+      enableDonk?: boolean;
+      donkSizes?: number[]; // % of pot (OOP only)
+    };
+    turn: {
+      oopBetSizes: number[];
+      ipBetSizes: number[];
+      oopRaiseSizes: number[];
+      ipRaiseSizes: number[];
+      enableDonk?: boolean;
+      donkSizes?: number[]; // % of pot (OOP only)
+    };
+    river: {
+      oopBetSizes: number[];
+      ipBetSizes: number[];
+      oopRaiseSizes: number[];
+      ipRaiseSizes: number[];
+      enableDonk?: boolean;
+      donkSizes?: number[]; // % of pot (OOP only)
+    };
+  };
+  
+  // Rake structure
+  rake: {
+    percentage: number;
+    cap: number; // in BBs
+    noFlopNoDrop: boolean;
+    preflopRake: boolean;
+  };
+  
+  // Advanced settings
+  icm?: {
+    enabled: boolean;
+    payouts?: number[];
+  };
+  antes?: number; // in BBs
+  straddle?: boolean;
+  
+  // Solver thresholds
+  startingPot?: number; // in BBs
+  addAllInThreshold?: number; // % of pot
+  forceAllInThreshold?: number; // % of stack
+  mergingThreshold?: number; // % difference
+}
 
 interface TableSettingsProps {
-  config: TableConfig;
-  onChange: (config: TableConfig) => void;
+  config: SolverConfig;
+  onChange: (config: SolverConfig) => void;
   onClose: () => void;
 }
 
@@ -20,1110 +117,1180 @@ const catppuccin = {
   blue: '#89b4fa',
   red: '#f38ba8',
   yellow: '#f9e2af',
-  mauve: '#cba6f7'
+  mauve: '#cba6f7',
+  sapphire: '#74c7ec',
+  pink: '#f5c2e7'
 };
 
+// Component for chip-style size inputs
+const SizeChips: React.FC<{
+  sizes: number[];
+  onChange: (sizes: number[]) => void;
+  label: string;
+  suffix?: string;
+  placeholder?: string;
+}> = ({ sizes, onChange, label, suffix = '', placeholder = 'Add size...' }) => {
+  const [inputValue, setInputValue] = useState('');
 
-export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, onClose }) => {
-  const [activeTab, setActiveTab] = useState<'basic' | 'preflop' | 'postflop' | 'rake'>('basic');
-  const [customBetInput, setCustomBetInput] = useState<{ [key: string]: string }>({
-    flop: '',
-    turn: '',
-    river: ''
-  });
-  const [customOpenSize, setCustomOpenSize] = useState('');
-  const [customThreebet, setCustomThreebet] = useState('');
-  const [customFourbet, setCustomFourbet] = useState('');
-  const [customRakePercent, setCustomRakePercent] = useState('');
-  const [customRakeCap, setCustomRakeCap] = useState('');
-  const [customStackSize, setCustomStackSize] = useState('');
-
-  const handleGameTypeChange = (gameType: GameType) => {
-    onChange({ ...config, gameType });
-  };
-
-  const handleTableSizeChange = (tableSize: '6max' | '9max' | 'HU') => {
-    onChange({ ...config, tableSize });
-  };
-
-  const handleStackSizeChange = (stackSize: string) => {
-    onChange({ ...config, stackSize: parseFloat(stackSize) || 100 });
-  };
-
-  const handlePreflopChange = (key: keyof typeof config.preflop, value: any) => {
-    onChange({
-      ...config,
-      preflop: { ...config.preflop, [key]: value }
-    });
-  };
-
-  const addBetSize = (street: 'flop' | 'turn' | 'river', size: number) => {
-    const newBetSizes = { ...config.betSizes };
-    if (!newBetSizes[street].includes(size)) {
-      newBetSizes[street] = [...newBetSizes[street], size].sort((a, b) => a - b);
-      onChange({ ...config, betSizes: newBetSizes });
+  const handleAdd = () => {
+    const value = parseFloat(inputValue);
+    if (!isNaN(value) && value > 0 && !sizes.includes(value)) {
+      onChange([...sizes, value].sort((a, b) => a - b));
+      setInputValue('');
     }
   };
 
-  const removeBetSize = (street: 'flop' | 'turn' | 'river', size: number) => {
-    const newBetSizes = { ...config.betSizes };
-    newBetSizes[street] = newBetSizes[street].filter(s => s !== size);
-    onChange({ ...config, betSizes: newBetSizes });
-  };
-
-
-  const formatBetSize = (size: number): string => {
-    if (size >= 100) return 'All-in';
-    return `${size}%`;
+  const handleRemove = (index: number) => {
+    onChange(sizes.filter((_, i) => i !== index));
   };
 
   return (
-    <div style={{
-      background: catppuccin.surface0,
-      borderBottom: `1px solid ${catppuccin.surface1}`,
-      padding: '0',
-      animation: 'slideDown 0.2s ease-out',
-      position: 'relative'
-    }}>
-      {/* Tab Navigation */}
-      <div style={{
-        display: 'flex',
-        borderBottom: `1px solid ${catppuccin.surface1}`,
-        padding: '0 1.5rem'
+    <div style={{ marginBottom: '1rem' }}>
+      <label style={{ 
+        fontSize: '0.875rem', 
+        color: catppuccin.subtext0,
+        display: 'block',
+        marginBottom: '0.5rem'
       }}>
-        {(['basic', 'preflop', 'postflop', 'rake'] as const).map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            style={{
-              padding: '1rem 1.5rem',
-              background: 'transparent',
-              color: activeTab === tab ? catppuccin.text : catppuccin.subtext0,
-              border: 'none',
-              borderBottom: activeTab === tab ? `2px solid ${catppuccin.blue}` : 'none',
-              cursor: 'pointer',
-              fontSize: '0.875rem',
-              fontWeight: activeTab === tab ? '600' : '400',
-              textTransform: 'capitalize',
-              transition: 'all 0.2s'
-            }}
-          >
-            {tab === 'basic' ? 'Game Setup' : tab}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab Content */}
-      <div style={{ padding: '1.5rem', maxWidth: '1200px', margin: '0 auto' }}>
-        {/* Basic Tab */}
-        {activeTab === 'basic' && (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-            gap: '2rem'
+        {label}
+      </label>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+        {sizes.map((size, i) => (
+          <div key={i} style={{
+            padding: '0.25rem 0.75rem',
+            background: catppuccin.surface1,
+            borderRadius: '20px',
+            fontSize: '0.875rem',
+            color: catppuccin.text,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem'
           }}>
-            {/* Game Type */}
-            <div>
-              <label style={{
-                display: 'block',
-                fontSize: '0.875rem',
-                fontWeight: '600',
-                color: catppuccin.subtext0,
-                marginBottom: '0.75rem',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em'
-              }}>
-                Game Type
-              </label>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(3, 1fr)',
-                gap: '0.5rem'
-              }}>
-                {(['Cash', 'MTT', 'Spin & Go'] as GameType[]).map(type => (
-                  <button
-                    key={type}
-                    onClick={() => handleGameTypeChange(type)}
-                    style={{
-                      padding: '0.75rem',
-                      background: config.gameType === type ? catppuccin.blue : catppuccin.surface1,
-                      color: config.gameType === type ? catppuccin.base : catppuccin.text,
-                      border: 'none',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      fontSize: '0.875rem',
-                      fontWeight: config.gameType === type ? '600' : '400',
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    {type}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Table Size */}
-            <div>
-              <label style={{
-                display: 'block',
-                fontSize: '0.875rem',
-                fontWeight: '600',
-                color: catppuccin.subtext0,
-                marginBottom: '0.75rem',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em'
-              }}>
-                Table Size
-              </label>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(3, 1fr)',
-                gap: '0.5rem'
-              }}>
-                {(['6max', '9max', 'HU'] as const).map(size => (
-                  <button
-                    key={size}
-                    onClick={() => handleTableSizeChange(size)}
-                    style={{
-                      padding: '0.75rem',
-                      background: config.tableSize === size ? catppuccin.green : catppuccin.surface1,
-                      color: config.tableSize === size ? catppuccin.base : catppuccin.text,
-                      border: 'none',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      fontSize: '0.875rem',
-                      fontWeight: config.tableSize === size ? '600' : '400'
-                    }}
-                  >
-                    {size}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Stack Size */}
-            <div>
-              <label style={{
-                display: 'block',
-                fontSize: '0.875rem',
-                fontWeight: '600',
-                color: catppuccin.subtext0,
-                marginBottom: '0.75rem',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em'
-              }}>
-                Effective Stack
-              </label>
-              <div style={{
-                display: 'flex',
-                gap: '0.5rem',
-                marginBottom: '0.5rem'
-              }}>
-                {[20, 50, 100, 200, 500].map(size => (
-                  <button
-                    key={size}
-                    onClick={() => {
-                      handleStackSizeChange(size.toString());
-                      setCustomStackSize('');
-                    }}
-                    style={{
-                      flex: 1,
-                      padding: '0.5rem',
-                      background: config.stackSize === size ? catppuccin.yellow : catppuccin.surface1,
-                      color: config.stackSize === size ? catppuccin.base : catppuccin.text,
-                      border: 'none',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      fontSize: '0.875rem',
-                      fontWeight: config.stackSize === size ? '600' : '400'
-                    }}
-                  >
-                    {size}BB
-                  </button>
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <input
-                  type="number"
-                  placeholder="Custom stack (e.g., 150)"
-                  value={customStackSize}
-                  onChange={(e) => setCustomStackSize(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      const value = parseFloat(customStackSize);
-                      if (value > 0) {
-                        handleStackSizeChange(value.toString());
-                      }
-                    }
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '0.75rem',
-                    background: catppuccin.mantle,
-                    color: catppuccin.text,
-                    border: `1px solid ${catppuccin.surface2}`,
-                    borderRadius: '8px',
-                    fontSize: '0.875rem'
-                  }}
-                />
-                <button
-                  onClick={() => {
-                    const value = parseFloat(customStackSize);
-                    if (value > 0) {
-                      handleStackSizeChange(value.toString());
-                    }
-                  }}
-                  style={{
-                    padding: '0.75rem 1rem',
-                    background: catppuccin.green,
-                    color: catppuccin.base,
-                    border: 'none',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem',
-                    fontWeight: '500'
-                  }}
-                >
-                  Set
-                </button>
-              </div>
-              {!([20, 50, 100, 200, 500].includes(config.stackSize)) && (
-                <div style={{
-                  marginTop: '0.5rem',
-                  padding: '0.5rem',
-                  background: catppuccin.surface1,
-                  borderRadius: '6px',
-                  fontSize: '0.75rem',
-                  color: catppuccin.green
-                }}>
-                  ✓ Custom: {config.stackSize}BB
-                </div>
-              )}
-            </div>
+            {size}{suffix}
+            <button
+              onClick={() => handleRemove(i)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: catppuccin.red,
+                cursor: 'pointer',
+                padding: 0,
+                fontSize: '1rem'
+              }}
+            >
+              ×
+            </button>
           </div>
-        )}
+        ))}
+        <input
+          type="text"
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+          placeholder={placeholder}
+          style={{
+            padding: '0.25rem 0.75rem',
+            background: catppuccin.surface0,
+            border: `1px solid ${catppuccin.surface1}`,
+            borderRadius: '20px',
+            color: catppuccin.text,
+            fontSize: '0.875rem',
+            width: '100px'
+          }}
+        />
+      </div>
+    </div>
+  );
+};
 
+export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, onClose }) => {
+  const [activeTab, setActiveTab] = useState<'general' | 'preflop' | 'postflop'>('general');
+  const [activePreflopPosition, setActivePreflopPosition] = useState<'all' | Position>('all');
+  const [activePostflopStreet, setActivePostflopStreet] = useState<'flop' | 'turn' | 'river'>('flop');
+
+  // Get positions based on table size
+  const getPositions = (): Position[] => {
+    switch (config.tableSize) {
+      case '6max': return ['HJ', 'LJ', 'CO', 'BTN', 'SB', 'BB'];
+      case '9max': return ['UTG', 'UTG+1', 'HJ', 'LJ', 'CO', 'BTN', 'SB', 'BB'];
+      case 'HU': return ['BTN', 'BB'];
+      default: return ['HJ', 'LJ', 'CO', 'BTN', 'SB', 'BB'];
+    }
+  };
+
+  // Get effective setting for a position (with inheritance)
+  const getEffectiveSetting = (position: Position | 'all', setting: keyof typeof config.preflop.all) => {
+    if (position === 'all') {
+      return config.preflop.all[setting];
+    }
+    
+    const override = config.preflop.overrides?.[position]?.[setting];
+    return override !== undefined ? override : config.preflop.all[setting];
+  };
+
+  // Update preflop setting
+  const updatePreflopSetting = (
+    position: Position | 'all',
+    setting: keyof typeof config.preflop.all,
+    value: any
+  ) => {
+    if (position === 'all') {
+      onChange({
+        ...config,
+        preflop: {
+          ...config.preflop,
+          all: {
+            ...config.preflop.all,
+            [setting]: value
+          }
+        }
+      });
+    } else {
+      onChange({
+        ...config,
+        preflop: {
+          ...config.preflop,
+          overrides: {
+            ...config.preflop.overrides,
+            [position]: {
+              ...config.preflop.overrides?.[position],
+              [setting]: value
+            }
+          }
+        }
+      });
+    }
+  };
+
+
+  return (
+    <>
+      {/* Modal Backdrop */}
+      <div 
+        onClick={onClose}
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.7)',
+          zIndex: 1000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center'
+        }}
+      />
+      
+      {/* Modal Content */}
+      <div style={{
+        position: 'fixed',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        width: '90%',
+        maxWidth: '1200px',
+        maxHeight: '85vh',
+        background: catppuccin.mantle,
+        borderRadius: '12px',
+        border: `1px solid ${catppuccin.surface1}`,
+        zIndex: 1001,
+        display: 'flex',
+        flexDirection: 'column',
+        boxShadow: '0 20px 60px rgba(0, 0, 0, 0.5)'
+      }}
+      onClick={(e) => e.stopPropagation()}
+      >
+        {/* Modal Header */}
+        <div style={{
+          padding: '1rem 1.5rem',
+          borderBottom: `1px solid ${catppuccin.surface1}`,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center'
+        }}>
+          <h2 style={{
+            fontSize: '1.25rem',
+            fontWeight: '700',
+            color: catppuccin.text
+          }}>
+            Table Settings
+          </h2>
+          
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            {/* Config management buttons */}
+            <button
+              onClick={() => console.log('Load config')}
+              style={{
+                padding: '0.5rem 1rem',
+                background: catppuccin.surface0,
+                color: catppuccin.text,
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '0.875rem',
+                cursor: 'pointer'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = catppuccin.surface1}
+              onMouseLeave={(e) => e.currentTarget.style.background = catppuccin.surface0}
+            >
+              📂 Load
+            </button>
+            
+            <button
+              onClick={() => console.log('Save config')}
+              style={{
+                padding: '0.5rem 1rem',
+                background: catppuccin.surface0,
+                color: catppuccin.text,
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '0.875rem',
+                cursor: 'pointer'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = catppuccin.surface1}
+              onMouseLeave={(e) => e.currentTarget.style.background = catppuccin.surface0}
+            >
+              💾 Save
+            </button>
+            
+            {/* Close button */}
+            <button
+              onClick={onClose}
+              style={{
+                padding: '0.5rem',
+                background: 'transparent',
+                color: catppuccin.overlay1,
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '1.25rem',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.color = catppuccin.text}
+              onMouseLeave={(e) => e.currentTarget.style.color = catppuccin.overlay1}
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+        
+        {/* Tab Bar */}
+        <div style={{
+          display: 'flex',
+          borderBottom: `1px solid ${catppuccin.surface1}`,
+          background: catppuccin.mantle
+        }}>
+          {(['general', 'preflop', 'postflop'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              style={{
+                padding: '1rem 1.5rem',
+                background: activeTab === tab ? catppuccin.surface0 : 'transparent',
+                color: activeTab === tab ? catppuccin.text : catppuccin.subtext0,
+                border: 'none',
+                borderBottom: activeTab === tab ? `2px solid ${catppuccin.blue}` : 'none',
+                cursor: 'pointer',
+                fontSize: '0.875rem',
+                fontWeight: activeTab === tab ? '600' : '400',
+                textTransform: 'capitalize'
+              }}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        {/* Content with scroll */}
+        <div style={{ 
+          padding: '1.5rem',
+          flex: 1,
+          overflowY: 'auto'
+        }}>
         {/* Preflop Tab */}
         {activeTab === 'preflop' && (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-            gap: '2rem'
-          }}>
-            {/* Open Raise Size */}
-            <div>
-              <label style={{
-                display: 'block',
-                fontSize: '0.875rem',
-                fontWeight: '600',
-                color: catppuccin.subtext0,
-                marginBottom: '0.75rem',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em'
-              }}>
-                Open Raise Size
-              </label>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(4, 1fr)',
-                gap: '0.5rem',
-                marginBottom: '0.5rem'
-              }}>
-                {[2, 2.2, 2.5, 3].map(size => (
-                  <button
-                    key={size}
-                    onClick={() => {
-                      handlePreflopChange('openSize', size);
-                      setCustomOpenSize('');
-                    }}
-                    style={{
-                      padding: '0.5rem',
-                      background: config.preflop.openSize === size ? catppuccin.blue : catppuccin.surface1,
-                      color: config.preflop.openSize === size ? catppuccin.base : catppuccin.text,
-                      border: 'none',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      fontSize: '0.875rem'
-                    }}
-                  >
-                    {size}x
-                  </button>
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <input
-                  type="number"
-                  step="0.1"
-                  placeholder="Custom (e.g., 2.3)"
-                  value={customOpenSize}
-                  onChange={(e) => setCustomOpenSize(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      const value = parseFloat(customOpenSize);
-                      if (value > 0) {
-                        handlePreflopChange('openSize', value);
-                      }
-                    }
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '0.5rem',
-                    background: catppuccin.mantle,
-                    color: catppuccin.text,
-                    border: `1px solid ${catppuccin.surface2}`,
-                    borderRadius: '6px',
-                    fontSize: '0.875rem'
-                  }}
-                />
-                <button
-                  onClick={() => {
-                    const value = parseFloat(customOpenSize);
-                    if (value > 0) {
-                      handlePreflopChange('openSize', value);
-                    }
-                  }}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    background: catppuccin.green,
-                    color: catppuccin.base,
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem',
-                    fontWeight: '500'
-                  }}
-                >
-                  Set
-                </button>
-              </div>
-              {!([2, 2.2, 2.5, 3].includes(config.preflop.openSize)) && (
-                <div style={{
-                  marginTop: '0.5rem',
-                  padding: '0.5rem',
-                  background: catppuccin.surface1,
-                  borderRadius: '6px',
-                  fontSize: '0.75rem',
-                  color: catppuccin.green
-                }}>
-                  ✓ Custom: {config.preflop.openSize}x
-                </div>
-              )}
-            </div>
-
-            {/* 3-Bet Size */}
-            <div>
-              <label style={{
-                display: 'block',
-                fontSize: '0.875rem',
-                fontWeight: '600',
-                color: catppuccin.subtext0,
-                marginBottom: '0.75rem',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em'
-              }}>
-                3-Bet Multiplier
-              </label>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(4, 1fr)',
-                gap: '0.5rem',
-                marginBottom: '0.5rem'
-              }}>
-                {[3, 3.5, 4, 4.5].map(size => (
-                  <button
-                    key={size}
-                    onClick={() => {
-                      handlePreflopChange('threebet', size);
-                      setCustomThreebet('');
-                    }}
-                    style={{
-                      padding: '0.5rem',
-                      background: config.preflop.threebet === size ? catppuccin.red : catppuccin.surface1,
-                      color: config.preflop.threebet === size ? catppuccin.base : catppuccin.text,
-                      border: 'none',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      fontSize: '0.875rem'
-                    }}
-                  >
-                    {size}x
-                  </button>
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <input
-                  type="number"
-                  step="0.1"
-                  placeholder="Custom (e.g., 3.8)"
-                  value={customThreebet}
-                  onChange={(e) => setCustomThreebet(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      const value = parseFloat(customThreebet);
-                      if (value > 0) {
-                        handlePreflopChange('threebet', value);
-                      }
-                    }
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '0.5rem',
-                    background: catppuccin.mantle,
-                    color: catppuccin.text,
-                    border: `1px solid ${catppuccin.surface2}`,
-                    borderRadius: '6px',
-                    fontSize: '0.875rem'
-                  }}
-                />
-                <button
-                  onClick={() => {
-                    const value = parseFloat(customThreebet);
-                    if (value > 0) {
-                      handlePreflopChange('threebet', value);
-                    }
-                  }}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    background: catppuccin.green,
-                    color: catppuccin.base,
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem',
-                    fontWeight: '500'
-                  }}
-                >
-                  Set
-                </button>
-              </div>
-              {!([3, 3.5, 4, 4.5].includes(config.preflop.threebet)) && (
-                <div style={{
-                  marginTop: '0.5rem',
-                  padding: '0.5rem',
-                  background: catppuccin.surface1,
-                  borderRadius: '6px',
-                  fontSize: '0.75rem',
-                  color: catppuccin.green
-                }}>
-                  ✓ Custom: {config.preflop.threebet}x
-                </div>
-              )}
-            </div>
-
-            {/* 4-Bet Size */}
-            <div>
-              <label style={{
-                display: 'block',
-                fontSize: '0.875rem',
-                fontWeight: '600',
-                color: catppuccin.subtext0,
-                marginBottom: '0.75rem',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em'
-              }}>
-                4-Bet Multiplier
-              </label>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(4, 1fr)',
-                gap: '0.5rem',
-                marginBottom: '0.5rem'
-              }}>
-                {[2.2, 2.5, 2.8, 3].map(size => (
-                  <button
-                    key={size}
-                    onClick={() => {
-                      handlePreflopChange('fourbet', size);
-                      setCustomFourbet('');
-                    }}
-                    style={{
-                      padding: '0.5rem',
-                      background: config.preflop.fourbet === size ? catppuccin.mauve : catppuccin.surface1,
-                      color: config.preflop.fourbet === size ? catppuccin.base : catppuccin.text,
-                      border: 'none',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      fontSize: '0.875rem'
-                    }}
-                  >
-                    {size}x
-                  </button>
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <input
-                  type="number"
-                  step="0.1"
-                  placeholder="Custom (e.g., 2.6)"
-                  value={customFourbet}
-                  onChange={(e) => setCustomFourbet(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      const value = parseFloat(customFourbet);
-                      if (value > 0) {
-                        handlePreflopChange('fourbet', value);
-                      }
-                    }
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '0.5rem',
-                    background: catppuccin.mantle,
-                    color: catppuccin.text,
-                    border: `1px solid ${catppuccin.surface2}`,
-                    borderRadius: '6px',
-                    fontSize: '0.875rem'
-                  }}
-                />
-                <button
-                  onClick={() => {
-                    const value = parseFloat(customFourbet);
-                    if (value > 0) {
-                      handlePreflopChange('fourbet', value);
-                    }
-                  }}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    background: catppuccin.green,
-                    color: catppuccin.base,
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem',
-                    fontWeight: '500'
-                  }}
-                >
-                  Set
-                </button>
-              </div>
-              {!([2.2, 2.5, 2.8, 3].includes(config.preflop.fourbet)) && (
-                <div style={{
-                  marginTop: '0.5rem',
-                  padding: '0.5rem',
-                  background: catppuccin.surface1,
-                  borderRadius: '6px',
-                  fontSize: '0.75rem',
-                  color: catppuccin.green
-                }}>
-                  ✓ Custom: {config.preflop.fourbet}x
-                </div>
-              )}
-            </div>
-
-            {/* All-in Threshold */}
-            <div>
-              <label style={{
-                display: 'block',
-                fontSize: '0.875rem',
-                fontWeight: '600',
-                color: catppuccin.subtext0,
-                marginBottom: '0.75rem',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em'
-              }}>
-                5-Bet/Jam Threshold (BBs)
-              </label>
-              <input
-                type="number"
-                value={config.preflop.fivebet}
-                onChange={(e) => handlePreflopChange('fivebet', parseFloat(e.target.value) || 100)}
+          <>
+            {/* Position Tabs */}
+            <div style={{
+              display: 'flex',
+              gap: '0.5rem',
+              marginBottom: '1.5rem',
+              flexWrap: 'wrap'
+            }}>
+              <button
+                onClick={() => setActivePreflopPosition('all')}
                 style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  background: catppuccin.mantle,
-                  color: catppuccin.text,
-                  border: `1px solid ${catppuccin.surface2}`,
+                  padding: '0.5rem 1rem',
+                  background: activePreflopPosition === 'all' ? catppuccin.blue : catppuccin.surface0,
+                  color: activePreflopPosition === 'all' ? catppuccin.base : catppuccin.text,
+                  border: 'none',
                   borderRadius: '8px',
-                  fontSize: '0.875rem'
+                  cursor: 'pointer',
+                  fontSize: '0.875rem',
+                  fontWeight: '600'
                 }}
-                placeholder="Stack size to jam (default: 100BB)"
-              />
+              >
+                All Positions
+              </button>
+              {getPositions().map(pos => (
+                <button
+                  key={pos}
+                  onClick={() => setActivePreflopPosition(pos)}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    background: activePreflopPosition === pos ? catppuccin.blue : catppuccin.surface0,
+                    color: activePreflopPosition === pos ? catppuccin.base : catppuccin.text,
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                    position: 'relative'
+                  }}
+                >
+                  {pos}
+                  {config.preflop.overrides?.[pos] && Object.keys(config.preflop.overrides[pos]).length > 0 && (
+                    <span style={{
+                      position: 'absolute',
+                      top: '-4px',
+                      right: '-4px',
+                      width: '8px',
+                      height: '8px',
+                      borderRadius: '50%',
+                      background: catppuccin.yellow
+                    }} />
+                  )}
+                </button>
+              ))}
             </div>
 
-            {/* Options */}
-            <div style={{ gridColumn: 'span 2' }}>
-              <label style={{
-                display: 'block',
-                fontSize: '0.875rem',
-                fontWeight: '600',
-                color: catppuccin.subtext0,
-                marginBottom: '0.75rem',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em'
-              }}>
-                Preflop Options
-              </label>
-              <div style={{ display: 'flex', gap: '1rem' }}>
-                <label style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  cursor: 'pointer'
+            {/* Position Settings */}
+            <div style={{
+              background: catppuccin.surface0,
+              borderRadius: '12px',
+              padding: '1.5rem'
+            }}>
+              {activePreflopPosition !== 'all' && (
+                <div style={{
+                  marginBottom: '1rem',
+                  padding: '0.75rem',
+                  background: catppuccin.surface1,
+                  borderRadius: '8px',
+                  fontSize: '0.875rem',
+                  color: catppuccin.subtext0
                 }}>
-                  <input
-                    type="checkbox"
-                    checked={config.preflop.limping}
-                    onChange={(e) => handlePreflopChange('limping', e.target.checked)}
-                    style={{ width: '18px', height: '18px' }}
+                  💡 Overriding defaults for {activePreflopPosition}. Leave empty to inherit from "All Positions".
+                </div>
+              )}
+
+              {/* Open Raise Sizes */}
+              <SizeChips
+                sizes={getEffectiveSetting(activePreflopPosition, 'openSizes') as number[]}
+                onChange={(sizes) => updatePreflopSetting(activePreflopPosition, 'openSizes', sizes)}
+                label="Open Raise Sizes"
+                suffix="bb"
+                placeholder="e.g., 2.5"
+              />
+
+              {/* 3-Bet Sizes */}
+              <SizeChips
+                sizes={getEffectiveSetting(activePreflopPosition, 'threeBet') as number[]}
+                onChange={(sizes) => updatePreflopSetting(activePreflopPosition, 'threeBet', sizes)}
+                label="3-Bet Sizes (Multipliers)"
+                suffix="x"
+                placeholder="e.g., 3.5"
+              />
+
+              {/* 4-Bet Sizes */}
+              <div style={{ marginBottom: '1rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                  <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0 }}>
+                    4-Bet Sizes (Multipliers)
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.875rem', color: catppuccin.text }}>
+                    <span style={{ marginRight: '0.5rem', fontSize: '0.75rem', color: catppuccin.subtext0 }}>All-in</span>
+                    <div
+                      onClick={() => updatePreflopSetting(activePreflopPosition, 'fourBet', {
+                        ...(getEffectiveSetting(activePreflopPosition, 'fourBet') as any),
+                        useAllIn: !(getEffectiveSetting(activePreflopPosition, 'fourBet') as any).useAllIn
+                      })}
+                      style={{
+                        width: '40px',
+                        height: '20px',
+                        borderRadius: '10px',
+                        background: (getEffectiveSetting(activePreflopPosition, 'fourBet') as any).useAllIn ? catppuccin.green : catppuccin.surface2,
+                        position: 'relative',
+                        cursor: 'pointer',
+                        transition: 'background 0.2s'
+                      }}
+                    >
+                      <div style={{
+                        width: '16px',
+                        height: '16px',
+                        borderRadius: '50%',
+                        background: catppuccin.text,
+                        position: 'absolute',
+                        top: '2px',
+                        left: (getEffectiveSetting(activePreflopPosition, 'fourBet') as any).useAllIn ? '22px' : '2px',
+                        transition: 'left 0.2s'
+                      }} />
+                    </div>
+                  </label>
+                </div>
+                {!(getEffectiveSetting(activePreflopPosition, 'fourBet') as any).useAllIn && (
+                  <SizeChips
+                    sizes={(getEffectiveSetting(activePreflopPosition, 'fourBet') as any).sizes || []}
+                    onChange={(sizes) => updatePreflopSetting(activePreflopPosition, 'fourBet', {
+                      ...(getEffectiveSetting(activePreflopPosition, 'fourBet') as any),
+                      sizes
+                    })}
+                    label=""
+                    suffix="x"
+                    placeholder="e.g., 2.5"
                   />
-                  <span style={{ color: catppuccin.text, fontSize: '0.875rem' }}>
-                    Allow Limping
-                  </span>
-                </label>
-                <label style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  cursor: 'pointer'
-                }}>
-                  <input
-                    type="checkbox"
-                    checked={config.preflop.rakePreflop}
-                    onChange={(e) => handlePreflopChange('rakePreflop', e.target.checked)}
-                    style={{ width: '18px', height: '18px' }}
-                  />
-                  <span style={{ color: catppuccin.text, fontSize: '0.875rem' }}>
-                    Rake Taken Preflop
-                  </span>
-                </label>
+                )}
               </div>
+
+              {/* 5-Bet Sizes - Only show if 4-bet is not all-in */}
+              {!(getEffectiveSetting(activePreflopPosition, 'fourBet') as any).useAllIn && (
+                <div style={{ marginBottom: '1rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                    <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0 }}>
+                      5-Bet Sizes (Multipliers)
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.875rem', color: catppuccin.text }}>
+                      <span style={{ marginRight: '0.5rem', fontSize: '0.75rem', color: catppuccin.subtext0 }}>All-in</span>
+                      <div
+                        onClick={() => updatePreflopSetting(activePreflopPosition, 'fiveBet', {
+                          ...(getEffectiveSetting(activePreflopPosition, 'fiveBet') as any),
+                          useAllIn: !(getEffectiveSetting(activePreflopPosition, 'fiveBet') as any).useAllIn
+                        })}
+                        style={{
+                          width: '40px',
+                          height: '20px',
+                          borderRadius: '10px',
+                          background: (getEffectiveSetting(activePreflopPosition, 'fiveBet') as any).useAllIn ? catppuccin.green : catppuccin.surface2,
+                          position: 'relative',
+                          cursor: 'pointer',
+                          transition: 'background 0.2s'
+                        }}
+                      >
+                        <div style={{
+                          width: '16px',
+                          height: '16px',
+                          borderRadius: '50%',
+                          background: catppuccin.text,
+                          position: 'absolute',
+                          top: '2px',
+                          left: (getEffectiveSetting(activePreflopPosition, 'fiveBet') as any).useAllIn ? '22px' : '2px',
+                          transition: 'left 0.2s'
+                        }} />
+                      </div>
+                    </label>
+                  </div>
+                  {!(getEffectiveSetting(activePreflopPosition, 'fiveBet') as any).useAllIn && (
+                    <SizeChips
+                      sizes={(getEffectiveSetting(activePreflopPosition, 'fiveBet') as any).sizes || []}
+                      onChange={(sizes) => updatePreflopSetting(activePreflopPosition, 'fiveBet', {
+                        ...(getEffectiveSetting(activePreflopPosition, 'fiveBet') as any),
+                        sizes
+                      })}
+                      label=""
+                      suffix="x"
+                      placeholder="e.g., 2.2"
+                    />
+                  )}
+                </div>
+              )}
+
+              {/* Allow Limping */}
+              <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.875rem', color: catppuccin.text }}>
+                <input
+                  type="checkbox"
+                  checked={getEffectiveSetting(activePreflopPosition, 'allowLimping') as boolean}
+                  onChange={(e) => updatePreflopSetting(activePreflopPosition, 'allowLimping', e.target.checked)}
+                  style={{ marginRight: '0.5rem' }}
+                />
+                Allow Limping
+              </label>
+
+              {/* Clear Override Button */}
+              {activePreflopPosition !== 'all' && config.preflop.overrides?.[activePreflopPosition] && (
+                <button
+                  onClick={() => {
+                    const overrides = { ...config.preflop.overrides };
+                    delete overrides[activePreflopPosition];
+                    onChange({
+                      ...config,
+                      preflop: {
+                        ...config.preflop,
+                        overrides
+                      }
+                    });
+                  }}
+                  style={{
+                    marginTop: '1rem',
+                    padding: '0.5rem 1rem',
+                    background: catppuccin.red,
+                    color: catppuccin.base,
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem'
+                  }}
+                >
+                  Clear All {activePreflopPosition} Overrides
+                </button>
+              )}
             </div>
-          </div>
+          </>
         )}
 
         {/* Postflop Tab */}
         {activeTab === 'postflop' && (
-          <div>
-            {/* Bet Sizes by Street */}
+          <>
+            {/* Street Tabs */}
             <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(3, 1fr)',
-              gap: '2rem'
+              display: 'flex',
+              gap: '0.5rem',
+              marginBottom: '1.5rem'
             }}>
               {(['flop', 'turn', 'river'] as const).map(street => (
-                <div key={street}>
-                  <h4 style={{
+                <button
+                  key={street}
+                  onClick={() => setActivePostflopStreet(street)}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    background: activePostflopStreet === street ? catppuccin.blue : catppuccin.surface0,
+                    color: activePostflopStreet === street ? catppuccin.base : catppuccin.text,
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
                     fontSize: '0.875rem',
                     fontWeight: '600',
-                    color: catppuccin.text,
-                    marginBottom: '1rem',
                     textTransform: 'capitalize'
-                  }}>
-                    {street}
-                  </h4>
+                  }}
+                >
+                  {street}
+                </button>
+              ))}
+            </div>
+
+            {/* Street Settings */}
+            <div style={{
+              background: catppuccin.surface0,
+              borderRadius: '12px',
+              padding: '1.5rem'
+            }}>
+              {/* OOP Settings */}
+              <div style={{ marginBottom: '1.5rem' }}>
+                <h4 style={{ fontSize: '0.9rem', fontWeight: '600', color: catppuccin.blue, marginBottom: '1rem' }}>
+                  Out of Position (OOP)
+                </h4>
+                
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0, display: 'flex', alignItems: 'center' }}>
+                    OOP Bet Sizes (% of Pot)
+                    <Tooltip content="Bet sizes when out of position as percentage of pot">
+                      <InfoIcon />
+                    </Tooltip>
+                  </label>
+                  <SizeChips
+                    sizes={config.postflop[activePostflopStreet].oopBetSizes || []}
+                    onChange={(sizes) => onChange({
+                      ...config,
+                      postflop: {
+                        ...config.postflop,
+                        [activePostflopStreet]: {
+                          ...config.postflop[activePostflopStreet],
+                          oopBetSizes: sizes
+                        }
+                      }
+                    })}
+                    label=""
+                    suffix="%"
+                    placeholder="e.g., 33"
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0, display: 'flex', alignItems: 'center' }}>
+                    OOP Raise Sizes (Multipliers)
+                    <Tooltip content="Raise sizes when out of position as multipliers of the previous bet">
+                      <InfoIcon />
+                    </Tooltip>
+                  </label>
+                  <SizeChips
+                    sizes={config.postflop[activePostflopStreet].oopRaiseSizes || []}
+                    onChange={(sizes) => onChange({
+                      ...config,
+                      postflop: {
+                        ...config.postflop,
+                        [activePostflopStreet]: {
+                          ...config.postflop[activePostflopStreet],
+                          oopRaiseSizes: sizes
+                        }
+                      }
+                    })}
+                    label=""
+                    suffix="x"
+                    placeholder="e.g., 2.5"
+                  />
+                </div>
+                
+                {/* Donk Betting - OOP only */}
+                <div style={{ marginTop: '1rem' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.875rem', color: catppuccin.text, marginBottom: '0.5rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={config.postflop[activePostflopStreet].enableDonk || false}
+                      onChange={(e) => onChange({
+                        ...config,
+                        postflop: {
+                          ...config.postflop,
+                          [activePostflopStreet]: {
+                            ...config.postflop[activePostflopStreet],
+                            enableDonk: e.target.checked
+                          }
+                        }
+                      })}
+                      style={{ marginRight: '0.5rem' }}
+                    />
+                    Enable Donk Betting
+                    <Tooltip content="Allow OOP player to lead into previous street's aggressor">
+                      <InfoIcon />
+                    </Tooltip>
+                  </label>
                   
-                  {/* Current Sizes */}
-                  <div style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    gap: '0.5rem',
-                    marginBottom: '1rem',
-                    minHeight: '40px'
-                  }}>
-                    {config.betSizes[street].map(size => (
-                      <div
-                        key={size}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.5rem',
-                          padding: '0.5rem 0.75rem',
-                          background: size >= 100 ? catppuccin.yellow : catppuccin.blue,
-                          color: catppuccin.base,
-                          borderRadius: '20px',
-                          fontSize: '0.875rem',
-                          fontWeight: '500'
-                        }}
-                      >
-                        {formatBetSize(size)}
+                  {config.postflop[activePostflopStreet].enableDonk && (
+                    <SizeChips
+                      sizes={config.postflop[activePostflopStreet].donkSizes || []}
+                      onChange={(sizes) => onChange({
+                        ...config,
+                        postflop: {
+                          ...config.postflop,
+                          [activePostflopStreet]: {
+                            ...config.postflop[activePostflopStreet],
+                            donkSizes: sizes
+                          }
+                        }
+                      })}
+                      label="Donk Bet Sizes (% of Pot)"
+                      suffix="%"
+                      placeholder="e.g., 25"
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* IP Settings */}
+              <div style={{ marginBottom: '1.5rem' }}>
+                <h4 style={{ fontSize: '0.9rem', fontWeight: '600', color: catppuccin.green, marginBottom: '1rem' }}>
+                  In Position (IP)
+                </h4>
+                
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0, display: 'flex', alignItems: 'center' }}>
+                    IP Bet Sizes (% of Pot)
+                    <Tooltip content="Bet sizes when in position as percentage of pot">
+                      <InfoIcon />
+                    </Tooltip>
+                  </label>
+                  <SizeChips
+                    sizes={config.postflop[activePostflopStreet].ipBetSizes || []}
+                    onChange={(sizes) => onChange({
+                      ...config,
+                      postflop: {
+                        ...config.postflop,
+                        [activePostflopStreet]: {
+                          ...config.postflop[activePostflopStreet],
+                          ipBetSizes: sizes
+                        }
+                      }
+                    })}
+                    label=""
+                    suffix="%"
+                    placeholder="e.g., 50"
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0, display: 'flex', alignItems: 'center' }}>
+                    IP Raise Sizes (Multipliers)
+                    <Tooltip content="Raise sizes when in position as multipliers of the previous bet">
+                      <InfoIcon />
+                    </Tooltip>
+                  </label>
+                  <SizeChips
+                    sizes={config.postflop[activePostflopStreet].ipRaiseSizes || []}
+                    onChange={(sizes) => onChange({
+                      ...config,
+                      postflop: {
+                        ...config.postflop,
+                        [activePostflopStreet]: {
+                          ...config.postflop[activePostflopStreet],
+                          ipRaiseSizes: sizes
+                        }
+                      }
+                    })}
+                    label=""
+                    suffix="x"
+                    placeholder="e.g., 2.5"
+                  />
+                </div>
+              </div>
+
+            </div>
+          </>
+        )}
+
+        {/* General Tab */}
+        {activeTab === 'general' && (
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '1.5rem'
+          }}>
+            {/* Game Settings Row */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '1.5rem'
+            }}>
+              {/* Game Configuration */}
+              <div style={{
+                background: catppuccin.surface0,
+                borderRadius: '12px',
+                padding: '1.5rem'
+              }}>
+                <h3 style={{
+                  fontSize: '1rem',
+                  fontWeight: '600',
+                  color: catppuccin.text,
+                  marginBottom: '1rem'
+                }}>
+                  Game Settings
+                </h3>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0, display: 'block', marginBottom: '0.25rem' }}>
+                  Game Type
+                </label>
+                <select
+                  value={config.gameType}
+                  onChange={(e) => onChange({ ...config, gameType: e.target.value as GameType })}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    background: catppuccin.surface1,
+                    border: `1px solid ${catppuccin.surface2}`,
+                    borderRadius: '8px',
+                    color: catppuccin.text,
+                    fontSize: '0.875rem'
+                  }}
+                >
+                  <option value="Cash">Cash Game</option>
+                  <option value="MTT">Tournament (MTT)</option>
+                  <option value="SnG">Sit & Go</option>
+                  <option value="Spin & Go">Spin & Go</option>
+                  <option value="HU">Heads-Up</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0, display: 'block', marginBottom: '0.25rem' }}>
+                  Table Size
+                </label>
+                <select
+                  value={config.tableSize}
+                  onChange={(e) => onChange({ ...config, tableSize: e.target.value as '6max' | '9max' | 'HU' })}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    background: catppuccin.surface1,
+                    border: `1px solid ${catppuccin.surface2}`,
+                    borderRadius: '8px',
+                    color: catppuccin.text,
+                    fontSize: '0.875rem'
+                  }}
+                >
+                  <option value="6max">6-Max</option>
+                  <option value="9max">9-Max</option>
+                  <option value="HU">Heads-Up</option>
+                </select>
+              </div>
+
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0, display: 'flex', alignItems: 'center', marginBottom: '0.25rem' }}>
+                  Effective Stack (BBs)
+                  <Tooltip content="Stack size for each player at the start of the hand">
+                    <InfoIcon />
+                  </Tooltip>
+                </label>
+                <input
+                  type="number"
+                  value={config.stackSize}
+                  onChange={(e) => onChange({ ...config, stackSize: parseFloat(e.target.value) })}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    background: catppuccin.surface1,
+                    border: `1px solid ${catppuccin.surface2}`,
+                    borderRadius: '8px',
+                    color: catppuccin.text,
+                    fontSize: '0.875rem'
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0, display: 'block', marginBottom: '0.25rem' }}>
+                  Antes (BBs)
+                </label>
+                <input
+                  type="number"
+                  value={config.antes || 0}
+                  onChange={(e) => onChange({ ...config, antes: parseFloat(e.target.value) || undefined })}
+                  step="0.1"
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    background: catppuccin.surface1,
+                    border: `1px solid ${catppuccin.surface2}`,
+                    borderRadius: '8px',
+                    color: catppuccin.text,
+                    fontSize: '0.875rem'
+                  }}
+                />
+              </div>
+
+              <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.875rem', color: catppuccin.text }}>
+                <input
+                  type="checkbox"
+                  checked={config.straddle || false}
+                  onChange={(e) => onChange({ ...config, straddle: e.target.checked })}
+                  style={{ marginRight: '0.5rem' }}
+                />
+                Enable Straddle
+              </label>
+            </div>
+
+              {/* Rake Settings */}
+              <div style={{
+                background: catppuccin.surface0,
+                borderRadius: '12px',
+                padding: '1.5rem'
+              }}>
+                <h3 style={{
+                  fontSize: '1rem',
+                  fontWeight: '600',
+                  color: catppuccin.text,
+                  marginBottom: '1rem'
+                }}>
+                  Rake Settings
+                </h3>
+
+                {/* Rake Presets */}
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0, display: 'block', marginBottom: '0.5rem' }}>
+                    Quick Presets:
+                  </label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    {(['NL2', 'NL5', 'NL10', 'NL25', 'NL50', 'NL100', 'NL500'] as const).map(stake => {
+                      const presets = {
+                        'NL2': { percentage: 5, cap: 0.5 },
+                        'NL5': { percentage: 5, cap: 0.5 },
+                        'NL10': { percentage: 5, cap: 2 },
+                        'NL25': { percentage: 5, cap: 3 },
+                        'NL50': { percentage: 5, cap: 4 },
+                        'NL100': { percentage: 5, cap: 3 },
+                        'NL500': { percentage: 5, cap: 0.6 }
+                      };
+                      return (
                         <button
-                          onClick={() => removeBetSize(street, size)}
+                          key={stake}
+                          onClick={() => onChange({
+                            ...config,
+                            rake: {
+                              ...config.rake,
+                              percentage: presets[stake].percentage,
+                              cap: presets[stake].cap
+                            }
+                          })}
                           style={{
-                            background: 'transparent',
+                            padding: '0.25rem 0.75rem',
+                            background: catppuccin.surface1,
+                            color: catppuccin.text,
                             border: 'none',
-                            color: catppuccin.base,
+                            borderRadius: '6px',
                             cursor: 'pointer',
-                            fontSize: '1rem',
-                            lineHeight: 1,
-                            padding: 0
+                            fontSize: '0.875rem',
+                            transition: 'background 0.2s'
                           }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = catppuccin.surface2}
+                          onMouseLeave={(e) => e.currentTarget.style.background = catppuccin.surface1}
                         >
-                          ×
+                          {stake}
                         </button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
+                </div>
 
-                  {/* Quick Add Buttons */}
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(3, 1fr)',
-                    gap: '0.25rem',
-                    marginBottom: '0.5rem'
-                  }}>
-                    {[25, 33, 50, 75, 100, 125].map(size => (
-                      <button
-                        key={size}
-                        onClick={() => addBetSize(street, size)}
-                        disabled={config.betSizes[street].includes(size)}
-                        style={{
-                          padding: '0.5rem',
-                          background: config.betSizes[street].includes(size) 
-                            ? catppuccin.surface2 
-                            : catppuccin.surface1,
-                          color: config.betSizes[street].includes(size)
-                            ? catppuccin.overlay1
-                            : catppuccin.text,
-                          border: 'none',
-                          borderRadius: '6px',
-                          cursor: config.betSizes[street].includes(size) ? 'not-allowed' : 'pointer',
-                          fontSize: '0.75rem',
-                          transition: 'all 0.2s'
-                        }}
-                      >
-                        {formatBetSize(size)}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Custom Input */}
-                  <div style={{
-                    display: 'flex',
-                    gap: '0.5rem'
-                  }}>
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0, display: 'flex', alignItems: 'center', marginBottom: '0.25rem' }}>
+                    Rake Percentage
+                    <Tooltip content="Percentage of pot taken as rake by the house">
+                      <InfoIcon />
+                    </Tooltip>
+                  </label>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <input
                       type="number"
-                      placeholder="Custom %"
-                      value={customBetInput[street] || ''}
-                      onChange={(e) => setCustomBetInput({
-                        ...customBetInput,
-                        [street]: e.target.value
+                      value={config.rake.percentage}
+                      onChange={(e) => onChange({
+                        ...config,
+                        rake: { ...config.rake, percentage: parseFloat(e.target.value) }
                       })}
+                      step="0.1"
                       style={{
                         flex: 1,
                         padding: '0.5rem',
-                        background: catppuccin.mantle,
-                        color: catppuccin.text,
+                        background: catppuccin.surface1,
                         border: `1px solid ${catppuccin.surface2}`,
-                        borderRadius: '6px',
-                        fontSize: '0.75rem'
+                        borderRadius: '8px',
+                        color: catppuccin.text,
+                        fontSize: '0.875rem'
                       }}
                     />
-                    <button
-                      onClick={() => {
-                        const size = parseFloat(customBetInput[street]);
-                        if (size > 0) {
-                          addBetSize(street, size);
-                          setCustomBetInput({ ...customBetInput, [street]: '' });
-                        }
-                      }}
-                      style={{
-                        padding: '0.5rem 1rem',
-                        background: catppuccin.green,
-                        color: catppuccin.base,
-                        border: 'none',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontSize: '0.75rem',
-                        fontWeight: '500'
-                      }}
-                    >
-                      Add
-                    </button>
+                    <span style={{
+                      padding: '0.5rem 0.75rem',
+                      background: catppuccin.surface1,
+                      borderRadius: '8px',
+                      fontSize: '0.875rem',
+                      color: catppuccin.subtext0
+                    }}>%</span>
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
 
-        {/* Rake Tab */}
-        {activeTab === 'rake' && (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-            gap: '2rem'
-          }}>
-            {/* Rake Percentage */}
-            <div>
-              <label style={{
-                display: 'block',
-                fontSize: '0.875rem',
-                fontWeight: '600',
-                color: catppuccin.subtext0,
-                marginBottom: '0.75rem',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em'
-              }}>
-                Rake Percentage
-              </label>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(5, 1fr)',
-                gap: '0.5rem',
-                marginBottom: '0.5rem'
-              }}>
-                {[0, 3, 5, 7.5, 10].map(percent => (
-                  <button
-                    key={percent}
-                    onClick={() => {
-                      onChange({
-                        ...config,
-                        rake: { ...config.rake, percentage: percent }
-                      });
-                      setCustomRakePercent('');
-                    }}
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0, display: 'flex', alignItems: 'center', marginBottom: '0.25rem' }}>
+                    Rake Cap (BBs)
+                    <Tooltip content="Maximum rake amount in big blinds">
+                      <InfoIcon />
+                    </Tooltip>
+                  </label>
+                  <input
+                    type="number"
+                    value={config.rake.cap}
+                    onChange={(e) => onChange({
+                      ...config,
+                      rake: { ...config.rake, cap: parseFloat(e.target.value) }
+                    })}
+                    step="0.5"
                     style={{
+                      width: '100%',
                       padding: '0.5rem',
-                      background: config.rake.percentage === percent ? catppuccin.red : catppuccin.surface1,
-                      color: config.rake.percentage === percent ? catppuccin.base : catppuccin.text,
-                      border: 'none',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
+                      background: catppuccin.surface1,
+                      border: `1px solid ${catppuccin.surface2}`,
+                      borderRadius: '8px',
+                      color: catppuccin.text,
                       fontSize: '0.875rem'
                     }}
-                  >
-                    {percent}%
-                  </button>
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <input
-                  type="number"
-                  step="0.5"
-                  placeholder="Custom %"
-                  value={customRakePercent}
-                  onChange={(e) => setCustomRakePercent(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      const value = parseFloat(customRakePercent);
-                      if (value >= 0) {
-                        onChange({
-                          ...config,
-                          rake: { ...config.rake, percentage: value }
-                        });
-                      }
-                    }
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '0.5rem',
-                    background: catppuccin.mantle,
-                    color: catppuccin.text,
-                    border: `1px solid ${catppuccin.surface2}`,
-                    borderRadius: '6px',
-                    fontSize: '0.875rem'
-                  }}
-                />
-                <button
-                  onClick={() => {
-                    const value = parseFloat(customRakePercent);
-                    if (value >= 0) {
-                      onChange({
-                        ...config,
-                        rake: { ...config.rake, percentage: value }
-                      });
-                    }
-                  }}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    background: catppuccin.green,
-                    color: catppuccin.base,
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem',
-                    fontWeight: '500'
-                  }}
-                >
-                  Set
-                </button>
-              </div>
-              {!([0, 3, 5, 7.5, 10].includes(config.rake.percentage)) && (
-                <div style={{
-                  marginTop: '0.5rem',
-                  padding: '0.5rem',
-                  background: catppuccin.surface1,
-                  borderRadius: '6px',
-                  fontSize: '0.75rem',
-                  color: catppuccin.green
-                }}>
-                  ✓ Custom: {config.rake.percentage}%
+                  />
                 </div>
-              )}
+
+                <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.875rem', color: catppuccin.text, marginBottom: '0.5rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={config.rake.noFlopNoDrop}
+                    onChange={(e) => onChange({
+                      ...config,
+                      rake: { ...config.rake, noFlopNoDrop: e.target.checked }
+                    })}
+                    style={{ marginRight: '0.5rem' }}
+                  />
+                  No Flop, No Drop
+                  <Tooltip content="No rake is taken if the hand ends preflop (standard online policy)">
+                    <InfoIcon />
+                  </Tooltip>
+                </label>
+
+                <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.875rem', color: catppuccin.text }}>
+                  <input
+                    type="checkbox"
+                    checked={config.rake.preflopRake}
+                    onChange={(e) => onChange({
+                      ...config,
+                      rake: { ...config.rake, preflopRake: e.target.checked }
+                    })}
+                    style={{ marginRight: '0.5rem' }}
+                  />
+                  Rake Preflop
+                  <Tooltip content="Whether to take rake on pots that end preflop (some sites do this)">
+                    <InfoIcon />
+                  </Tooltip>
+                </label>
+              </div>
             </div>
 
-            {/* Rake Cap */}
-            <div>
-              <label style={{
-                display: 'block',
-                fontSize: '0.875rem',
+            {/* Solver Thresholds */}
+            <div style={{
+              background: catppuccin.surface0,
+              borderRadius: '12px',
+              padding: '1.5rem',
+              gridColumn: 'span 2'
+            }}>
+              <h3 style={{
+                fontSize: '1rem',
                 fontWeight: '600',
-                color: catppuccin.subtext0,
-                marginBottom: '0.75rem',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em'
+                color: catppuccin.text,
+                marginBottom: '1rem'
               }}>
-                Rake Cap (BBs)
-              </label>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(5, 1fr)',
-                gap: '0.5rem',
-                marginBottom: '0.5rem'
-              }}>
-                {[0, 1, 3, 5, 10].map(cap => (
-                  <button
-                    key={cap}
-                    onClick={() => {
-                      onChange({
-                        ...config,
-                        rake: { ...config.rake, cap }
-                      });
-                      setCustomRakeCap('');
-                    }}
+                Solver Thresholds
+              </h3>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0, display: 'flex', alignItems: 'center', marginBottom: '0.25rem' }}>
+                    Add All-in Threshold (%)
+                    <Tooltip content="Include all-in as betting option when it exceeds this % of pot (default 150%)">
+                      <InfoIcon />
+                    </Tooltip>
+                  </label>
+                  <input
+                    type="number"
+                    value={config.addAllInThreshold || 150}
+                    onChange={(e) => onChange({ ...config, addAllInThreshold: parseFloat(e.target.value) })}
+                    step="10"
                     style={{
+                      width: '100%',
                       padding: '0.5rem',
-                      background: config.rake.cap === cap ? catppuccin.red : catppuccin.surface1,
-                      color: config.rake.cap === cap ? catppuccin.base : catppuccin.text,
-                      border: 'none',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
+                      background: catppuccin.surface1,
+                      border: `1px solid ${catppuccin.surface2}`,
+                      borderRadius: '8px',
+                      color: catppuccin.text,
                       fontSize: '0.875rem'
                     }}
-                  >
-                    {cap}BB
-                  </button>
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <input
-                  type="number"
-                  step="0.5"
-                  placeholder="Custom BBs"
-                  value={customRakeCap}
-                  onChange={(e) => setCustomRakeCap(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      const value = parseFloat(customRakeCap);
-                      if (value >= 0) {
-                        onChange({
-                          ...config,
-                          rake: { ...config.rake, cap: value }
-                        });
-                      }
-                    }
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '0.5rem',
-                    background: catppuccin.mantle,
-                    color: catppuccin.text,
-                    border: `1px solid ${catppuccin.surface2}`,
-                    borderRadius: '6px',
-                    fontSize: '0.875rem'
-                  }}
-                />
-                <button
-                  onClick={() => {
-                    const value = parseFloat(customRakeCap);
-                    if (value >= 0) {
-                      onChange({
-                        ...config,
-                        rake: { ...config.rake, cap: value }
-                      });
-                    }
-                  }}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    background: catppuccin.green,
-                    color: catppuccin.base,
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem',
-                    fontWeight: '500'
-                  }}
-                >
-                  Set
-                </button>
-              </div>
-              {!([0, 1, 3, 5, 10].includes(config.rake.cap)) && (
-                <div style={{
-                  marginTop: '0.5rem',
-                  padding: '0.5rem',
-                  background: catppuccin.surface1,
-                  borderRadius: '6px',
-                  fontSize: '0.75rem',
-                  color: catppuccin.green
-                }}>
-                  ✓ Custom: {config.rake.cap}BB
+                  />
                 </div>
-              )}
+
+                <div>
+                  <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0, display: 'flex', alignItems: 'center', marginBottom: '0.25rem' }}>
+                    Force All-in Threshold (%)
+                    <Tooltip content="Convert bets to all-in when committing >X% of stack (default 20%)">
+                      <InfoIcon />
+                    </Tooltip>
+                  </label>
+                  <input
+                    type="number"
+                    value={config.forceAllInThreshold || 20}
+                    onChange={(e) => onChange({ ...config, forceAllInThreshold: parseFloat(e.target.value) })}
+                    step="5"
+                    style={{
+                      width: '100%',
+                      padding: '0.5rem',
+                      background: catppuccin.surface1,
+                      border: `1px solid ${catppuccin.surface2}`,
+                      borderRadius: '8px',
+                      color: catppuccin.text,
+                      fontSize: '0.875rem'
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0, display: 'flex', alignItems: 'center', marginBottom: '0.25rem' }}>
+                    Merging Threshold (%)
+                    <Tooltip content="Combine similar bet sizes within X% to simplify tree (default 10%)">
+                      <InfoIcon />
+                    </Tooltip>
+                  </label>
+                  <input
+                    type="number"
+                    value={config.mergingThreshold || 10}
+                    onChange={(e) => onChange({ ...config, mergingThreshold: parseFloat(e.target.value) })}
+                    step="1"
+                    style={{
+                      width: '100%',
+                      padding: '0.5rem',
+                      background: catppuccin.surface1,
+                      border: `1px solid ${catppuccin.surface2}`,
+                      borderRadius: '8px',
+                      color: catppuccin.text,
+                      fontSize: '0.875rem'
+                    }}
+                  />
+                </div>
+              </div>
             </div>
 
-            {/* Rake Options */}
-            <div>
-              <label style={{
-                display: 'block',
-                fontSize: '0.875rem',
-                fontWeight: '600',
-                color: catppuccin.subtext0,
-                marginBottom: '0.75rem',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em'
+            {/* ICM Settings (if tournament) */}
+            {(config.gameType === 'MTT' || config.gameType === 'SnG') && (
+              <div style={{
+                background: catppuccin.surface0,
+                borderRadius: '12px',
+                padding: '1.5rem',
+                gridColumn: 'span 2'
               }}>
-                Rake Options
-              </label>
-              <label style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                cursor: 'pointer'
-              }}>
-                <input
-                  type="checkbox"
-                  checked={config.rake.noFlopNoDrop}
-                  onChange={(e) => onChange({
-                    ...config,
-                    rake: { ...config.rake, noFlopNoDrop: e.target.checked }
-                  })}
-                  style={{ width: '18px', height: '18px' }}
-                />
-                <span style={{ color: catppuccin.text, fontSize: '0.875rem' }}>
-                  No Flop No Drop (no rake if hand ends preflop)
-                </span>
-              </label>
-            </div>
+                <h3 style={{
+                  fontSize: '1rem',
+                  fontWeight: '600',
+                  color: catppuccin.text,
+                  marginBottom: '1rem'
+                }}>
+                  ICM Settings
+                </h3>
+
+                <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.875rem', color: catppuccin.text, marginBottom: '1rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={config.icm?.enabled || false}
+                    onChange={(e) => onChange({
+                      ...config,
+                      icm: { ...config.icm, enabled: e.target.checked }
+                    })}
+                    style={{ marginRight: '0.5rem' }}
+                  />
+                  Enable ICM Calculations
+                </label>
+
+                {config.icm?.enabled && (
+                  <div>
+                    <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0, display: 'block', marginBottom: '0.25rem' }}>
+                      Payout Structure (%)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g., 50,30,20"
+                      value={config.icm?.payouts?.join(',') || ''}
+                      onChange={(e) => {
+                        const payouts = e.target.value.split(',').map(p => parseFloat(p.trim())).filter(p => !isNaN(p));
+                        onChange({
+                          ...config,
+                          icm: { ...config.icm, enabled: true, payouts }
+                        });
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        background: catppuccin.surface1,
+                        border: `1px solid ${catppuccin.surface2}`,
+                        borderRadius: '8px',
+                        color: catppuccin.text,
+                        fontSize: '0.875rem'
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
+        </div>
       </div>
-
-      {/* Close button */}
-      <button
-        onClick={onClose}
-        style={{
-          position: 'absolute',
-          top: '1rem',
-          right: '1rem',
-          background: catppuccin.surface1,
-          border: 'none',
-          color: catppuccin.text,
-          fontSize: '1.25rem',
-          cursor: 'pointer',
-          width: '32px',
-          height: '32px',
-          borderRadius: '50%',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          transition: 'all 0.2s'
-        }}
-        onMouseEnter={e => e.currentTarget.style.background = catppuccin.surface2}
-        onMouseLeave={e => e.currentTarget.style.background = catppuccin.surface1}
-      >
-        ×
-      </button>
-    </div>
+    </>
   );
 };

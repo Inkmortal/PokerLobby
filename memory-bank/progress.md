@@ -1,168 +1,132 @@
 # Progress
 
 ## Current Status
-**Project Phase**: Core Implementation - Solver Integration Complete
+**Project Phase**: Range Builder Implementation - Core Mechanics Complete
 **Date Started**: 2025-08-13
-**Last Updated**: 2025-08-13
+**Last Updated**: 2025-08-14
 
 ## What Works
-- Project structure defined and created
-- Technology stack selected (React + TypeScript + Electron)
-- Memory bank established with comprehensive documentation
-- Development priorities clear (Solver first)
+
+### Solver Integration (Complete)
 - **COMPLETE postflop-solver Rust code integrated** (2025-08-13)
 - **Native Node.js bindings created** for maximum performance
 - **Electron configured** for desktop deployment
-- **API layer** ready to bridge UI and native solver
-- **TypeScript build system working** - All 40 compilation errors resolved
 - **Native solver module COMPILED and TESTED** - Successfully solving poker games
 - **Electron IPC handlers implemented** - Full solver integration with main process
 
+### Range Builder (Partially Complete)
+- **Action Sequence Timeline** - Visual poker decision tree with drag navigation
+- **Dynamic Position Cards** - Shows available actions for each position
+- **Smart Gap-Filling** - Auto check/fold for skipped positions
+- **Multi-Betting Cycles** - Supports unlimited betting rounds
+- **Index-Based Card System** - Proper tracking of multiple actions per position
+- **BB Special Logic** - BB only appears when someone limps/raises
+- **Proper Betting Logic** - All-in handling, stack-aware betting options
+- **Paint Tool** - Working range frequency painting
+- **Table Settings UI** - Complete settings panel (but not integrated)
+
 ## What's Been Built
-- Project documentation (CLAUDE.md)
-- Memory bank structure with all core files
-- Clear architectural patterns defined
-- Technology decisions documented
-- **Unified project structure created** (2025-08-13)
-  - Frontend (React + TypeScript)
-  - API layer (unified for local/cloud)
-  - Electron configuration
-  - Shared types
-  - Package.json with all dependencies
-- **Full postflop-solver integration** (2025-08-13)
-  - ALL source files from postflop-solver copied
-  - Native Node.js bindings using napi-rs
-  - Configured for native compilation (NOT WASM)
-  - NativeSolver class wrapping PostFlopGame
-  - Ready to compile with `npm run build`
+
+### Project Infrastructure
+- Unified project structure (Frontend + API + Electron)
+- Memory bank documentation system
+- TypeScript build system working
+- Full postflop-solver integration with native bindings
+
+### Range Builder Components
+1. **PokerGameEngine** - Centralized game logic
+   - Complete betting round detection
+   - Proper position ordering (HJ first in preflop)
+   - Stack-aware action generation
+   - NO automatic street advancement (deliberate design)
+
+2. **ActionSequenceBar** - Timeline visualization
+   - Index-based cards (not position-based)
+   - Proper past/current/future status tracking
+   - Drag navigation for long sequences
+   - Dynamic height based on available actions
+
+3. **Game Tree Structure**
+   - ActionNodes with complete state snapshots
+   - Range storage at each node
+   - Parent-child navigation
+   - Saved available actions (no recalculation)
+
+## What Doesn't Work Yet
+
+### Critical Missing Features
+1. **Table Settings Integration** - Settings exist but don't affect game simulation
+2. **Range Persistence** - Ranges don't save between actions or sessions
+3. **Range Initialization Sliders** - Were removed, need to be restored
+4. **Position Selection** - Can't click position to view/edit range without selecting action
+5. **Postflop Continuation** - Stops at preflop, doesn't continue to flop/turn/river
+6. **Board Cards** - No way to select flop/turn/river cards
+7. **Range Library** - No connection between tree and range library system
+
+### Known Issues
+- Range data at nodes isn't properly propagated through tree
+- "Save Range" button saves entire tree, not individual ranges
+- Can't manually construct ranges for specific positions/actions
+- Tree represents library of ranges but linkage not implemented
 
 ## What's Left to Build
 
-### Immediate Priority (Solver - Week 1-2)
-- [x] Copy postflop-solver Rust code ✅
-- [x] Set up React + TypeScript + Electron project ✅
-- [x] Create Rust-JS communication layer ✅
-- [ ] Compile native solver module
-- [ ] Build dynamic game tree configuration UI
-- [ ] Implement solution browser
-- [ ] Add export functionality
+### Immediate Priority (Range Builder Completion)
+- [ ] Integrate table settings with game engine
+- [ ] Restore range initialization sliders
+- [ ] Implement range persistence within session
+- [ ] Add position selection without action requirement
+- [ ] Enable manual range construction for any position/action
+- [ ] Link range tree to library system
+- [ ] Extend simulation beyond preflop to all streets
+- [ ] Add board card selection for postflop
 
-### Core Features (Week 3-6)
-- [ ] Poker game engine
-- [ ] Hand evaluator
-- [ ] Range editor
-- [ ] EV calculations
-- [ ] Solution caching system
-- [ ] Settings/preferences
+### Solver Integration
+- [ ] Connect ranges to existing solver
+- [ ] Handle missing tree paths
+- [ ] Build solver UI for postflop analysis
+- [ ] Implement range propagation through tree
 
-### Training System (Week 7-10)
-- [ ] Hand history parser (PokerStars format)
-- [ ] Hand history parser (GGPoker format)
+### Training System
+- [ ] Hand history parser
 - [ ] Population range construction
 - [ ] Drill mode implementation
 - [ ] Progress tracking
-- [ ] Mistake analysis
-
-### Data Management (Week 11-12)
-- [ ] SQLite integration
-- [ ] Hand database schema
-- [ ] Solution storage
-- [ ] Import/export system
-- [ ] Backup functionality
-
-### Polish & Optimization (Week 13-14)
-- [ ] Performance optimization
-- [ ] UI animations
-- [ ] Dark/light themes
-- [ ] Keyboard shortcuts
-- [ ] Help system
-
-### Multiplayer (Stretch Goal - Week 15+)
-- [ ] WebSocket server
-- [ ] Lobby system
-- [ ] Matchmaking
-- [ ] MMR calculation
-- [ ] Leaderboards
-
-## Known Issues
-- Native module needs to be compiled (`npm run build` in rust folder)
-- Specific hand history formats need documentation
-- UI framework choice (Tailwind vs others) pending
-
-## Completed Milestones
-- ✅ Project inception
-- ✅ Technology stack selection
-- ✅ Architecture planning
-- ✅ Memory bank setup
-- ✅ Solver code integration (postflop-solver)
-- ✅ Native bindings created
-- ✅ Project structure implementation
-
-## Upcoming Milestones
-- [ ] Working WASM solver
-- [ ] Basic solver UI
-- [ ] First successful solve
-- [ ] Export functionality
-- [ ] Alpha release
 
 ## Evolution of Decisions
 
-### Solver Evolution
-1. **Initial plan**: Use TexasSolver (C++)
-2. **Research finding**: Postflop-solver (Rust) is 2x faster, more accurate
-3. **Final decision**: Use postflop-solver core code
+### Range Builder Architecture
+1. **Initial**: Simple action sequence tracking
+2. **Problem**: State retroactively changed when editing
+3. **Solution**: Complete state snapshots at each node
 
-### Architecture Evolution
-1. **Initial thought**: WebAssembly for everything
-2. **Realization**: Native binary simpler and faster for desktop
-3. **Final approach**: Native Rust for desktop, WASM for future web
+### Timeline Design
+1. **Initial**: Position-based cards
+2. **Problem**: Multiple actions per position caused confusion
+3. **Solution**: Index-based cards with unique IDs
 
-### Game Configuration Evolution
-1. **Initial plan**: Build for 6-max specifically
-2. **Better approach**: Dynamic game tree construction
-3. **Final decision**: Support ANY table configuration via parameters
+### BB Visibility
+1. **Initial**: BB always visible
+2. **Realization**: BB shouldn't act if everyone folds
+3. **Solution**: BB only appears after someone acts (limps/raises)
 
-### Preflop Strategy Evolution
-1. **Initial concern**: Can't solve multiway preflop
-2. **Research finding**: No open source does this, even commercial limited
-3. **Solution**: Use pre-computed ranges initially, build preflop solver later
-
-## Performance Metrics
-*To be tracked once implementation begins*
-- Solver speed: Target < 2 seconds
-- UI framerate: Target 60fps
-- Memory usage: TBD
-- Bundle size: TBD
-
-## Risk Register
-
-### High Risk
-- WebAssembly performance might not meet targets
-- C++ to WASM compilation complexity
-
-### Medium Risk
-- SQLite performance with large hand histories
-- Electron app size might be large
-- Cross-platform compatibility issues
-
-### Low Risk
-- UI complexity manageable with React
-- TypeScript learning curve minimal
-- Market adoption (personal project priority)
-
-## Technical Debt
-*None yet - clean slate project*
-
-## Lessons Learned
-- Existing poker software has significant UX problems
-- Users want ownership, not subscriptions
-- Clean UI is a major differentiator
-- Population-based training is underserved
-- Solver-first approach aligns with user priorities
+## Technical Achievements
+- O(N) timeline processing (was O(N²))
+- Proper all-in handling with stack awareness
+- Smart decimal formatting (100 not 100.0, but keeps 99.5)
+- Clean action labels without redundant "BB" suffix
+- Elegant BB edge case handling without hardcoding
 
 ## Next Actions
-1. Create React + TypeScript + Electron boilerplate
-2. Set up development environment
-3. Configure Emscripten for WASM compilation
-4. Create basic UI shell
-5. Implement first solver integration test
+1. **Connect table settings to game engine** - Make settings actually affect gameplay
+2. **Restore range sliders** - Bring back quick initialization tools
+3. **Implement range persistence** - Save ranges at each node
+4. **Add position click handler** - View/edit ranges without action selection
+5. **Extend to postflop** - Continue simulation through all streets
+6. **Add board card selection** - UI for choosing flop/turn/river
+
+## Performance Notes
+- Timeline renders smoothly with 20+ actions
+- Drag navigation working well
+- No performance issues with current implementation
+- Ready for solver integration once ranges persist

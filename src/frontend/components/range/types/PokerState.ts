@@ -27,6 +27,7 @@ export interface BettingRoundState {
   lastAggressor: Position | null;
   street: Street;
   boardCards: string[];
+  raiseCount: number; // Track number of raises/bets this street (0 = no raises yet)
 }
 
 // This is the new, critical structure for our timeline

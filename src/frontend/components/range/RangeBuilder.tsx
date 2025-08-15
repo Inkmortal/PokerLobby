@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { RangeGrid } from './RangeGrid';
-import { TableSettings } from './TableSettings';
+import { TableSettings, SolverConfig } from './TableSettings';
 import { ActionSequenceBar } from './ActionSequenceBar';
 import { PaintToolbar } from './PaintToolbar';
 import { RangeStats } from './RangeStats';
@@ -24,44 +24,8 @@ export interface RangeData {
   [combo: string]: HandAction;
 }
 
-export interface TableConfig {
-  gameType: GameType;
-  format: 'Classic' | 'Progressive' | 'PKO';
-  tableSize: '6max' | '9max' | 'HU';
-  stackSize: number; // in BBs
-  
-  // Preflop configuration
-  preflop: {
-    openSize: number; // Default open raise (BBs)
-    threebet: number; // 3-bet multiplier
-    fourbet: number; // 4-bet multiplier
-    fivebet: number; // 5-bet/jam threshold
-    limping: boolean; // Allow limping
-    rakePreflop: boolean; // Rake taken preflop
-  };
-  
-  // Postflop bet sizes
-  betSizes: {
-    flop: number[];
-    turn: number[];
-    river: number[];
-  };
-  
-  // Rake structure
-  rake: {
-    percentage: number;
-    cap: number; // in BBs
-    noFlopNoDrop: boolean; // No rake if no flop
-  };
-  
-  // Advanced settings
-  icm?: {
-    enabled: boolean;
-    payouts?: number[];
-  };
-  antes?: number; // in BBs
-  straddle?: boolean;
-}
+// Re-export TableConfig as alias for SolverConfig for compatibility
+export type TableConfig = SolverConfig;
 
 // Legacy ActionNode for ActionSequenceBar compatibility
 export interface ActionNode {
@@ -105,30 +69,64 @@ const catppuccin = {
 };
 
 export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolver }) => {
-  // Table configuration
-  const [tableConfig, setTableConfig] = useState<TableConfig>({
+  // Table configuration with enhanced solver settings
+  const [tableConfig, setTableConfig] = useState<SolverConfig>({
     gameType: 'Cash',
     format: 'Classic',
     tableSize: '6max',
     stackSize: 100,
     preflop: {
-      openSize: 2.5,
-      threebet: 3.5,
-      fourbet: 2.5,
-      fivebet: 100, // All-in threshold
-      limping: false,
-      rakePreflop: false
+      all: {
+        openSizes: [2.5],
+        threeBet: [3],
+        fourBet: {
+          sizes: [2.5],
+          useAllIn: false
+        },
+        fiveBet: {
+          sizes: [2.5],
+          useAllIn: false,
+          allInThreshold: 60
+        },
+        allowLimping: false
+      },
+      overrides: {}
     },
-    betSizes: {
-      flop: [33, 50, 75],
-      turn: [50, 75],
-      river: [50, 75]
+    postflop: {
+      flop: {
+        oopBetSizes: [33, 50, 75],
+        ipBetSizes: [33, 50, 75, 100],
+        oopRaiseSizes: [2.5, 3],
+        ipRaiseSizes: [2.2, 2.5, 3],
+        enableDonk: false,
+        donkSizes: []
+      },
+      turn: {
+        oopBetSizes: [50, 75, 100],
+        ipBetSizes: [50, 75, 100],
+        oopRaiseSizes: [2.5, 3],
+        ipRaiseSizes: [2.2, 2.5],
+        enableDonk: false,
+        donkSizes: []
+      },
+      river: {
+        oopBetSizes: [50, 75, 100, 150],
+        ipBetSizes: [50, 75, 100, 150],
+        oopRaiseSizes: [2.5],
+        ipRaiseSizes: [2.2, 2.5],
+        enableDonk: false,
+        donkSizes: []
+      }
     },
     rake: {
       percentage: 5,
       cap: 3,
-      noFlopNoDrop: true
-    }
+      noFlopNoDrop: true,
+      preflopRake: false
+    },
+    addAllInThreshold: 150,
+    forceAllInThreshold: 20,
+    mergingThreshold: 10
   });
 
   // Get positions based on table size
@@ -142,7 +140,7 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
   };
 
   // Game tree and engine
-  const [gameEngine] = useState(() => new PokerGameEngine(getPositions(), tableConfig));
+  const [gameEngine, setGameEngine] = useState(() => new PokerGameEngine(getPositions(), tableConfig));
   const [gameTree, setGameTree] = useState<{
     root: ActionNode;
     currentNode: ActionNode;
@@ -162,10 +160,17 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
     const newPositions = getPositions();
     const newEngine = new PokerGameEngine(newPositions, tableConfig);
     const rootNode = newEngine.createRootNode();
+    
+    // Actually update the engine in state
+    setGameEngine(newEngine);
+    
+    // Reset the tree with the new engine
     setGameTree({
       root: rootNode,
       currentNode: rootNode
     });
+    
+    // Clear ranges since the tree structure changed
     setRangeData({});
   }, [tableConfig]);
   
@@ -479,7 +484,7 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
         </div>
       </div>
 
-      {/* Settings Panel (collapsible) */}
+      {/* Settings Modal */}
       {showSettings && (
         <TableSettings
           config={tableConfig}

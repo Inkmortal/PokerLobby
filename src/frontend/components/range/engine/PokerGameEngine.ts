@@ -7,13 +7,14 @@ import {
   BettingRoundState,
   ActionNode 
 } from '../types/PokerState';
-import { RangeData, TableConfig } from '../RangeBuilder';
+import { RangeData } from '../RangeBuilder';
+import { SolverConfig } from '../TableSettings';
 
 export class PokerGameEngine {
   private positions: Position[];
-  private tableConfig: TableConfig;
+  private tableConfig: SolverConfig;
 
-  constructor(positions: Position[], tableConfig: TableConfig) {
+  constructor(positions: Position[], tableConfig: SolverConfig) {
     this.positions = positions;
     this.tableConfig = tableConfig;
   }
@@ -43,7 +44,8 @@ export class PokerGameEngine {
       amountToCall: 1, // BB
       lastAggressor: null,
       street: 'preflop',
-      boardCards: []
+      boardCards: [],
+      raiseCount: 1 // Blinds count as the first bet
     };
   }
 
@@ -100,13 +102,13 @@ export class PokerGameEngine {
             }
           }
         }
-        // Then add the blinds at the end
-        for (const pos of ['SB', 'BB'] as Position[]) {
-          const player = state.players.get(pos);
-          if (player && !player.isFolded && !player.isAllIn) {
-            pending.push(pos);
-          }
+        // Add SB
+        const sbPlayer = state.players.get('SB');
+        if (sbPlayer && !sbPlayer.isFolded && !sbPlayer.isAllIn) {
+          pending.push('SB');
         }
+        
+        // BB is NOT added initially - they only appear after someone acts
       } else {
         // Postflop: action starts from earliest position
         for (const pos of this.positions) {
@@ -134,6 +136,25 @@ export class PokerGameEngine {
       }
       
       if (player && !player.isFolded && !player.isAllIn) {
+        // Special handling for BB in preflop first cycle
+        if (pos === 'BB' && state.street === 'preflop' && !player.hasActedThisPass) {
+          // BB only appears in timeline after someone limps/raises (not just folds)
+          // Check if anyone (including SB) has put money in
+          const someoneActed = Array.from(state.players.values()).some(p => {
+            if (p.position === 'BB') return false; // BB doesn't count
+            if (p.position === 'SB') {
+              // SB counts if they completed/raised (put in more than 0.5BB)
+              return p.betInRound > 0.5;
+            }
+            // Other positions count if they put any money in
+            return p.betInRound > 0;
+          });
+          
+          if (!someoneActed) {
+            continue; // Don't add BB to timeline yet
+          }
+        }
+        
         // Player needs to act if:
         // 1. They haven't acted this pass, OR
         // 2. They need to match a bet
@@ -144,6 +165,20 @@ export class PokerGameEngine {
     }
     
     return pending;
+  }
+
+  // Get effective setting for a position (with inheritance)
+  private getEffectivePreflopSetting(position: Position, setting: keyof typeof this.tableConfig.preflop.all) {
+    const override = this.tableConfig.preflop.overrides?.[position]?.[setting];
+    return override !== undefined ? override : this.tableConfig.preflop.all[setting];
+  }
+
+  // Helper to format BB amounts (no .0, keep .5)
+  private formatBB(amount: number): string {
+    if (amount % 1 === 0) {
+      return amount.toString();
+    }
+    return amount.toFixed(1);
   }
 
   // Determine all valid actions for a player
@@ -170,92 +205,180 @@ export class PokerGameEngine {
     if (player.betInRound < state.amountToCall) {
       const toCall = state.amountToCall - player.betInRound;
       
-      // Special case: Limp in preflop
-      if (isPreflop && state.amountToCall === 1 && !hasAggressor) {
+      // If calling requires our entire stack or more, it's still just a call
+      if (toCall >= player.stack) {
+        const callAmount = player.stack + player.betInRound;
         available.push({ 
           action: 'call', 
-          label: 'Limp 1BB' 
+          amount: callAmount,
+          label: `Call ${this.formatBB(callAmount)}` 
         });
       } else {
-        // Show the total amount to match, not the additional chips needed
-        available.push({ 
-          action: 'call', 
-          label: `Call ${state.amountToCall.toFixed(1)}BB` 
-        });
+        // Special case: Limp in preflop
+        if (isPreflop && state.amountToCall === 1 && !hasAggressor) {
+          // Check if limping is allowed for this position
+          const allowLimping = this.getEffectivePreflopSetting(position, 'allowLimping') as boolean;
+          if (allowLimping) {
+            available.push({ 
+              action: 'call', 
+              label: 'Limp 1' 
+            });
+          }
+        } else {
+          // Show the total amount to match
+          available.push({ 
+            action: 'call', 
+            label: `Call ${this.formatBB(state.amountToCall)}` 
+          });
+        }
       }
     }
 
-    // Bet/Raise options
+    // Bet/Raise options - only show amounts that don't exceed total stack
+    const totalStack = player.stack + player.betInRound; // Total available including what's already bet
+    
+    // Array to collect all bet/raise options before applying thresholds
+    const betRaiseOptions: PlayerAction[] = [];
+    
     if (!hasAggressor && isPreflop) {
-      // Opening bet
-      const openSize = this.tableConfig.preflop.openSize;
-      available.push({ 
-        action: 'open', 
-        amount: openSize, 
-        label: `Open ${openSize}BB` 
-      });
+      // Opening bet - get position-specific or default sizes
+      const openSizes = this.getEffectivePreflopSetting(position, 'openSizes') as number[];
       
-      // Alternative open sizes
-      if (openSize !== 2.5) {
-        available.push({ action: 'open', amount: 2.5, label: 'Open 2.5BB' });
-      }
-      if (openSize !== 3) {
-        available.push({ action: 'open', amount: 3, label: 'Open 3BB' });
-      }
+      // Show all configured open sizes that don't exceed stack
+      openSizes.forEach(size => {
+        if (size <= totalStack) {
+          betRaiseOptions.push({ 
+            action: 'open', 
+            amount: size, 
+            label: `Open ${this.formatBB(size)}` 
+          });
+        }
+      });
     } else if (!hasAggressor && !isPreflop) {
-      // Postflop bet
-      const betSizes = this.getBetSizesForStreet(state.street);
+      // Postflop bet - determine if IP or OOP
+      const isIP = this.isInPositionPostflop(position, state);
+      const betSizes = this.getBetSizesForStreet(state.street, isIP);
       betSizes.forEach(size => {
         const betAmount = (state.pot * size) / 100;
-        available.push({
-          action: 'bet',  // Use 'bet' for postflop instead of 'open'
-          amount: betAmount,
-          label: `Bet ${betAmount.toFixed(1)}BB`  // Show in BBs
-        });
+        // Only show if doesn't exceed total stack
+        if (betAmount <= totalStack) {
+          betRaiseOptions.push({
+            action: 'bet',
+            amount: betAmount,
+            label: `Bet ${this.formatBB(betAmount)}`
+          });
+        }
       });
+      
+      // Check for donk betting (OOP betting into previous aggressor)
+      if (!isIP && state.lastAggressor && state.lastAggressor !== position) {
+        const streetConfig = this.tableConfig.postflop[state.street as 'flop' | 'turn' | 'river'];
+        if (streetConfig?.enableDonk && streetConfig.donkSizes) {
+          streetConfig.donkSizes.forEach(size => {
+            const donkAmount = (state.pot * size) / 100;
+            if (donkAmount <= totalStack) {
+              betRaiseOptions.push({
+                action: 'bet',
+                amount: donkAmount,
+                label: `Donk ${this.formatBB(donkAmount)}`
+              });
+            }
+          });
+        }
+      }
     } else {
       // Raise
       if (isPreflop) {
-        const raiseMultiplier = this.getRaiseMultiplier(state);
-        const raiseAmount = state.amountToCall * raiseMultiplier;
+        const raiseMultipliers = this.getPreflopRaiseMultipliers(state, position);
         
-        available.push({ 
-          action: 'raise', 
-          amount: raiseAmount, 
-          label: `Raise to ${raiseAmount.toFixed(1)}BB` 
+        // Show all configured raise sizes
+        raiseMultipliers.forEach(multiplier => {
+          const raiseAmount = state.amountToCall * multiplier;
+          if (raiseAmount <= totalStack) {
+            betRaiseOptions.push({ 
+              action: 'raise', 
+              amount: raiseAmount, 
+              label: `Raise to ${this.formatBB(raiseAmount)}` 
+            });
+          }
         });
-        
-        // Alternative raise size
-        const altRaise = state.amountToCall * 2.5;
-        if (Math.abs(altRaise - raiseAmount) > 0.1) {
-          available.push({ 
-            action: 'raise', 
-            amount: altRaise, 
-            label: `Raise to ${altRaise.toFixed(1)}BB` 
-          });
-        }
       } else {
-        // Postflop raises - calculate based on pot
-        const raiseSizes = [2.5, 3];  // Standard raise multipliers
+        // Postflop raises - determine if IP or OOP
+        const isIP = this.isInPositionPostflop(position, state);
+        const raiseSizes = this.getRaiseSizesForStreet(state.street, isIP);
         raiseSizes.forEach(multiplier => {
           const raiseAmount = state.amountToCall * multiplier;
-          available.push({ 
-            action: 'raise', 
-            amount: raiseAmount, 
-            label: `Raise to ${raiseAmount.toFixed(1)}BB` 
-          });
+          // Only show if doesn't exceed total stack
+          if (raiseAmount <= totalStack) {
+            betRaiseOptions.push({ 
+              action: 'raise', 
+              amount: raiseAmount, 
+              label: `Raise to ${this.formatBB(raiseAmount)}` 
+            });
+          }
         });
       }
     }
+    
+    // Apply solver thresholds to bet/raise options
+    let filteredOptions = this.applyMergingThreshold(betRaiseOptions);
+    filteredOptions = this.applyForceAllInThreshold(filteredOptions, player.stack, player.betInRound, state.pot);
+    
+    // Add filtered options to available actions
+    available.push(...filteredOptions);
 
-    // All-in
+    // All-in handling - check if we should add all-in based on config
     if (player.stack > 0) {
       const allinTotal = player.stack + player.betInRound;
-      available.push({ 
-        action: 'allin', 
-        amount: allinTotal, 
-        label: `All-in ${allinTotal.toFixed(1)}BB` 
-      });
+      let shouldAddAllIn = false;
+      
+      // Check configuration for automatic all-in
+      if (isPreflop && hasAggressor) {
+        const bettingLevel = this.getBettingLevel(state);
+        
+        if (bettingLevel === 4) {
+          // Next action would be 4-bet - check if all-in is enabled
+          const fourBet = this.getEffectivePreflopSetting(position, 'fourBet') as any;
+          shouldAddAllIn = fourBet.useAllIn;
+        } else if (bettingLevel === 5) {
+          // Next action would be 5-bet - check if all-in is enabled
+          const fiveBet = this.getEffectivePreflopSetting(position, 'fiveBet') as any;
+          if (fiveBet.useAllIn) {
+            // Check threshold if set
+            if (fiveBet.allInThreshold && player.stack < fiveBet.allInThreshold) {
+              shouldAddAllIn = true;
+            } else if (!fiveBet.allInThreshold) {
+              shouldAddAllIn = true;
+            }
+          }
+        } else if (bettingLevel >= 6) {
+          // 6-bet and beyond - always allow all-in
+          shouldAddAllIn = true;
+        }
+      }
+      
+      // Check addAllInThreshold - add all-in when it exceeds X% of pot
+      if (!shouldAddAllIn && this.tableConfig.addAllInThreshold) {
+        const allinBetAmount = allinTotal - player.betInRound;
+        const potPercentage = (allinBetAmount / state.pot) * 100;
+        if (potPercentage >= this.tableConfig.addAllInThreshold) {
+          shouldAddAllIn = true;
+        }
+      }
+      
+      // Check if all-in is already effectively covered by another action
+      const alreadyHasAllin = available.some(action => 
+        action.amount && Math.abs(action.amount - allinTotal) < 0.01
+      );
+      
+      // Add all-in if configured or not already present
+      if (!alreadyHasAllin && shouldAddAllIn) {
+        available.push({ 
+          action: 'allin', 
+          amount: allinTotal, 
+          label: 'All-in' 
+        });
+      }
     }
 
     return available;
@@ -275,7 +398,8 @@ export class PokerGameEngine {
       amountToCall: initialState.amountToCall,
       lastAggressor: initialState.lastAggressor,
       street: initialState.street,
-      boardCards: [...initialState.boardCards]
+      boardCards: [...initialState.boardCards],
+      raiseCount: initialState.raiseCount
     };
 
     // Clone all players
@@ -324,6 +448,7 @@ export class PokerGameEngine {
           newState.pot += actualBet;
           newState.amountToCall = player.betInRound;
           newState.lastAggressor = position;
+          newState.raiseCount++; // Increment raise count
           
           if (player.stack === 0) {
             player.isAllIn = true;
@@ -350,6 +475,7 @@ export class PokerGameEngine {
         if (player.betInRound > newState.amountToCall) {
           newState.amountToCall = player.betInRound;
           newState.lastAggressor = position;
+          newState.raiseCount++; // All-in raise counts as a raise
           
           // Reset hasActedThisPass for all OTHER active players
           newState.players.forEach((p, pos) => {
@@ -425,7 +551,8 @@ export class PokerGameEngine {
       amountToCall: 0,
       lastAggressor: null,
       street: this.getNextStreet(state.street),
-      boardCards: [...state.boardCards]
+      boardCards: [...state.boardCards],
+      raiseCount: 0 // Reset raise count for new street
     };
 
     // Clone all players and reset for new street
@@ -457,26 +584,163 @@ export class PokerGameEngine {
     }
   }
 
-  private getBetSizesForStreet(street: Street): number[] {
-    switch (street) {
-      case 'flop': return this.tableConfig.betSizes.flop;
-      case 'turn': return this.tableConfig.betSizes.turn;
-      case 'river': return this.tableConfig.betSizes.river;
-      default: return [50, 75];
-    }
+  private getBetSizesForStreet(street: Street, isInPosition: boolean): number[] {
+    const streetConfig = this.tableConfig.postflop[street as 'flop' | 'turn' | 'river'];
+    if (!streetConfig) return [50, 75];
+    
+    return isInPosition ? 
+      (streetConfig.ipBetSizes || []) : 
+      (streetConfig.oopBetSizes || []);
   }
 
-  private getRaiseMultiplier(state: BettingRoundState): number {
-    if (state.street === 'preflop') {
-      // Count how many raises have happened
-      const raiseCount = state.lastAggressor ? 1 : 0; // Simplified
-      
-      if (raiseCount === 0) return this.tableConfig.preflop.threebet;
-      if (raiseCount === 1) return this.tableConfig.preflop.fourbet;
-      return 2.5; // Default for 5-bet+
+  private getRaiseSizesForStreet(street: Street, isInPosition: boolean): number[] {
+    const streetConfig = this.tableConfig.postflop[street as 'flop' | 'turn' | 'river'];
+    if (!streetConfig) return [2.5, 3];
+    
+    return isInPosition ? 
+      (streetConfig.ipRaiseSizes || []) : 
+      (streetConfig.oopRaiseSizes || []);
+  }
+  
+  private isInPositionPostflop(position: Position, state: BettingRoundState): boolean {
+    // In postflop, position is relative to the button
+    // Players closer to the button act later and are "in position"
+    // This is a simplified version - in reality it depends on who's still in the hand
+    const positionOrder = ['SB', 'BB', 'UTG', 'UTG+1', 'HJ', 'LJ', 'CO', 'BTN'];
+    const playerIndex = positionOrder.indexOf(position);
+    
+    // Find the latest position still in the hand
+    let latestPosition = -1;
+    state.players.forEach((player, pos) => {
+      if (!player.isFolded) {
+        const idx = positionOrder.indexOf(pos);
+        if (idx > latestPosition) latestPosition = idx;
+      }
+    });
+    
+    // You're in position if you're the latest position or close to it
+    // This is simplified - proper implementation would track actual betting order
+    return playerIndex >= latestPosition - 1;
+  }
+
+  private getPreflopRaiseMultipliers(state: BettingRoundState, position: Position): number[] {
+    // Get betting level - this tells us what the NEXT bet would be
+    const bettingLevel = this.getBettingLevel(state);
+    
+    if (bettingLevel === 2) {
+      // Next action would be 2-bet (open)
+      const openSizes = this.getEffectivePreflopSetting(position, 'openSizes') as number[];
+      return openSizes;
+    } else if (bettingLevel === 3) {
+      // Next action would be 3-bet
+      const threeBet = this.getEffectivePreflopSetting(position, 'threeBet') as number[];
+      return threeBet;
+    } else if (bettingLevel === 4) {
+      // Next action would be 4-bet
+      const fourBet = this.getEffectivePreflopSetting(position, 'fourBet') as any;
+      // If all-in is enabled, return empty array (all-in will be added separately)
+      if (fourBet.useAllIn) {
+        return [];
+      }
+      return fourBet.sizes || [];
+    } else if (bettingLevel === 5) {
+      // Next action would be 5-bet
+      const fiveBet = this.getEffectivePreflopSetting(position, 'fiveBet') as any;
+      // If all-in is enabled, return empty array (all-in will be added separately)
+      if (fiveBet.useAllIn) {
+        return [];
+      }
+      return fiveBet.sizes || [];
+    } else if (bettingLevel >= 6) {
+      // 6-bet and beyond - usually just all-in
+      return [];
     }
     
-    // Postflop: typically 2.5-3x
-    return 2.5;
+    return []; // No default sizing for 6-bet+
+  }
+
+
+  private getBettingLevel(state: BettingRoundState): number {
+    // Use the actual raise count to determine betting level
+    // Preflop: raiseCount starts at 1 (blinds = 1st bet)
+    //   1 = blinds only (can open/2-bet)
+    //   2 = 2-bet/open happened (can 3-bet)
+    //   3 = 3-bet happened (can 4-bet)
+    //   4 = 4-bet happened (can 5-bet)
+    //   5+ = 5-bet+ happened
+    // Postflop: raiseCount starts at 0
+    //   0 = no bets yet (can bet)
+    //   1 = bet happened (can raise/2-bet)
+    //   2 = raise happened (can 3-bet)
+    //   etc.
+    
+    // Return what bet level the NEXT action would be
+    return state.raiseCount + 1;
+  }
+  
+  // Apply merging threshold - combine similar bet sizes
+  private applyMergingThreshold(options: PlayerAction[]): PlayerAction[] {
+    if (!this.tableConfig.mergingThreshold || options.length <= 1) {
+      return options;
+    }
+    
+    const threshold = this.tableConfig.mergingThreshold;
+    const merged: PlayerAction[] = [];
+    const sorted = [...options].sort((a, b) => (a.amount || 0) - (b.amount || 0));
+    
+    sorted.forEach(option => {
+      const lastMerged = merged[merged.length - 1];
+      if (lastMerged && option.amount && lastMerged.amount) {
+        const percentDiff = ((option.amount - lastMerged.amount) / lastMerged.amount) * 100;
+        if (percentDiff <= threshold) {
+          // Skip this option, it's too close to the previous one
+          return;
+        }
+      }
+      merged.push(option);
+    });
+    
+    return merged;
+  }
+  
+  // Apply force all-in threshold - replace large bets with all-in
+  private applyForceAllInThreshold(options: PlayerAction[], stack: number, betInRound: number, currentPot: number): PlayerAction[] {
+    if (!this.tableConfig.forceAllInThreshold) {
+      return options;
+    }
+    
+    const threshold = this.tableConfig.forceAllInThreshold / 100; // Convert to decimal
+    const totalAvailable = stack + betInRound;
+    
+    return options.map(option => {
+      if (option.amount) {
+        // This is the SPR-based calculation per the PioSOLVER formula
+        // We need to check if the opponent's SPR after calling would be below threshold
+        // SPR after call = remaining stack / new pot
+        
+        // Calculate the pot after this bet is made
+        const betAmount = option.amount;
+        const potAfterBet = currentPot + (betAmount - betInRound);
+        
+        // Assume opponent calls with same amount (simplified - in reality depends on opponent's stack)
+        const potAfterCall = potAfterBet + betAmount;
+        
+        // Opponent's remaining stack after calling (assuming they have similar stack)
+        const opponentStackAfterCall = stack - (betAmount - betInRound);
+        
+        // Calculate SPR after the call
+        const sprAfterCall = opponentStackAfterCall / potAfterCall;
+        
+        if (sprAfterCall <= threshold) {
+          // Replace with all-in (total available)
+          return {
+            action: 'allin',
+            amount: totalAvailable,
+            label: 'All-in'
+          };
+        }
+      }
+      return option;
+    });
   }
 }

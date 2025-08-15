@@ -57,11 +57,8 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
   
   const [positionStates, setPositionStates] = useState<PositionDisplayState[]>([]);
   
-  // Drag navigation refs
+  // Scrollbar ref
   const containerRef = useRef<HTMLDivElement>(null);
-  const isDragging = useRef(false);
-  const startX = useRef(0);
-  const scrollLeft = useRef(0);
   
 
   useEffect(() => {
@@ -141,37 +138,6 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
   const handlePositionClick = (state: PositionDisplayState) => {
     onPositionClick(state.position, state.index);
   };
-  
-  // Drag handlers
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (!containerRef.current) return;
-    isDragging.current = true;
-    startX.current = e.pageX - containerRef.current.offsetLeft;
-    scrollLeft.current = containerRef.current.scrollLeft;
-    containerRef.current.style.cursor = 'grabbing';
-  };
-  
-  const handleMouseLeave = () => {
-    isDragging.current = false;
-    if (containerRef.current) {
-      containerRef.current.style.cursor = 'grab';
-    }
-  };
-  
-  const handleMouseUp = () => {
-    isDragging.current = false;
-    if (containerRef.current) {
-      containerRef.current.style.cursor = 'grab';
-    }
-  };
-  
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging.current || !containerRef.current) return;
-    e.preventDefault();
-    const x = e.pageX - containerRef.current.offsetLeft;
-    const walk = (x - startX.current) * 2;
-    containerRef.current.scrollLeft = scrollLeft.current - walk;
-  };
 
   const getActionColor = (action: string) => {
     switch (action) {
@@ -195,16 +161,12 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
       style={{
         background: catppuccin.surface0,
         borderBottom: `1px solid ${catppuccin.surface1}`,
-        padding: '0.75rem 1rem',
+        padding: '0.75rem 1rem 0.5rem 1rem',
         overflowX: 'auto',
-        minHeight: `${dynamicHeight + 20}px`,
-        cursor: 'grab',
-        userSelect: 'none'
+        minHeight: `${dynamicHeight + 30}px`,
+        position: 'relative'
       }}
-      onMouseDown={handleMouseDown}
-      onMouseLeave={handleMouseLeave}
-      onMouseUp={handleMouseUp}
-      onMouseMove={handleMouseMove}>
+      className="action-sequence-scrollbar">
       <div style={{
         display: 'flex',
         alignItems: 'stretch',
@@ -236,7 +198,6 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
                 opacity: state.status === 'inactive' ? 0.5 : 1,
                 transition: 'all 0.2s'
               }}
-              onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 handlePositionClick(state);
@@ -290,7 +251,6 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
                   return (
                     <button
                       key={`${actionInfo.action}-${actionInfo.amount || 'default'}`}
-                      onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation();
                         e.preventDefault();
@@ -429,6 +389,50 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
           </div>
         ))}
       </div>
+      
+      {/* Custom scrollbar styles */}
+      <style>{`
+        .action-sequence-scrollbar {
+          scrollbar-width: thin;
+          scrollbar-color: ${catppuccin.blue} ${catppuccin.surface1};
+        }
+        
+        .action-sequence-scrollbar::-webkit-scrollbar {
+          height: 12px;
+          margin-top: 4px;
+        }
+        
+        .action-sequence-scrollbar::-webkit-scrollbar-track {
+          background: ${catppuccin.surface1};
+          border-radius: 6px;
+          margin: 0 8px;
+        }
+        
+        .action-sequence-scrollbar::-webkit-scrollbar-thumb {
+          background: ${catppuccin.blue};
+          border-radius: 6px;
+          border: 2px solid ${catppuccin.surface1};
+          transition: background 0.2s;
+        }
+        
+        .action-sequence-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: ${catppuccin.sapphire};
+          border-color: ${catppuccin.surface2};
+        }
+        
+        .action-sequence-scrollbar::-webkit-scrollbar-thumb:active {
+          background: ${catppuccin.mauve};
+        }
+        
+        /* Firefox scrollbar styling */
+        @supports (scrollbar-width: thin) {
+          .action-sequence-scrollbar {
+            scrollbar-width: auto;
+            scrollbar-color: ${catppuccin.blue} ${catppuccin.surface1};
+            padding-bottom: 4px;
+          }
+        }
+      `}</style>
     </div>
   );
 };
