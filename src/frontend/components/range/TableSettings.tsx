@@ -27,6 +27,23 @@ export interface SolverConfig {
         allInThreshold?: number; // Auto all-in if stack < this
       };
       allowLimping: boolean;
+      allowOpenShove: boolean; // Allow all-in as opening action
+      
+      // VS specific aggressor settings (when facing opens/raises from specific positions)
+      vsAggressor?: {
+        [aggressor in Position]?: {
+          threeBet?: number[];
+          fourBet?: {
+            sizes?: number[];
+            useAllIn?: boolean;
+          };
+          fiveBet?: {
+            sizes?: number[];
+            useAllIn?: boolean;
+            allInThreshold?: number;
+          };
+        };
+      };
     };
     // Position-specific overrides
     overrides?: {
@@ -43,6 +60,23 @@ export interface SolverConfig {
           allInThreshold?: number;
         };
         allowLimping?: boolean;
+        allowOpenShove?: boolean;
+        
+        // VS specific aggressor overrides for this position
+        vsAggressor?: {
+          [aggressor in Position]?: {
+            threeBet?: number[];
+            fourBet?: {
+              sizes?: number[];
+              useAllIn?: boolean;
+            };
+            fiveBet?: {
+              sizes?: number[];
+              useAllIn?: boolean;
+              allInThreshold?: number;
+            };
+          };
+        };
       };
     };
   };
@@ -206,6 +240,7 @@ const SizeChips: React.FC<{
 export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, onClose }) => {
   const [activeTab, setActiveTab] = useState<'general' | 'preflop' | 'postflop'>('general');
   const [activePreflopPosition, setActivePreflopPosition] = useState<'all' | Position>('all');
+  const [activeVsAggressor, setActiveVsAggressor] = useState<'default' | Position>('default');
   const [activePostflopStreet, setActivePostflopStreet] = useState<'flop' | 'turn' | 'river'>('flop');
 
   // Get positions based on table size
@@ -217,9 +252,54 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
       default: return ['HJ', 'LJ', 'CO', 'BTN', 'SB', 'BB'];
     }
   };
+  
+  // Get positions that can be aggressors for a given position
+  const getPossibleAggressors = (position: Position | 'all'): Position[] => {
+    if (position === 'all') {
+      // For 'all', show all positions (they all can be aggressors in various scenarios)
+      return getPositions();
+    }
+    
+    const positions = getPositions();
+    
+    // Every position needs VS settings for all OTHER positions because:
+    // - Early positions face 3-bets from later positions after opening
+    // - Late positions face opens from earlier positions
+    // - Middle positions face both scenarios
+    // - Any position can face re-raises (4-bet, 5-bet) from any other position
+    // So we return all positions except the current one
+    return positions.filter(p => p !== position);
+  };
 
-  // Get effective setting for a position (with inheritance)
-  const getEffectiveSetting = (position: Position | 'all', setting: keyof typeof config.preflop.all) => {
+  // Get effective setting for a position (with inheritance and VS aggressor support)
+  const getEffectiveSetting = (
+    position: Position | 'all', 
+    setting: keyof typeof config.preflop.all,
+    vsAggressor?: Position | 'default'
+  ) => {
+    // For open sizes, limping, and open shove, VS doesn't apply
+    if (setting === 'openSizes' || setting === 'allowLimping' || setting === 'allowOpenShove') {
+      if (position === 'all') {
+        return config.preflop.all[setting];
+      }
+      const override = config.preflop.overrides?.[position]?.[setting];
+      return override !== undefined ? override : config.preflop.all[setting];
+    }
+    
+    // For 3bet/4bet/5bet, check VS aggressor settings
+    if (vsAggressor && vsAggressor !== 'default') {
+      // Check position-specific VS aggressor override first
+      if (position !== 'all') {
+        const posVsOverride = config.preflop.overrides?.[position]?.vsAggressor?.[vsAggressor]?.[setting];
+        if (posVsOverride !== undefined) return posVsOverride;
+      }
+      
+      // Check general VS aggressor setting
+      const generalVsOverride = config.preflop.all.vsAggressor?.[vsAggressor]?.[setting];
+      if (generalVsOverride !== undefined) return generalVsOverride;
+    }
+    
+    // Fall back to regular position override or default
     if (position === 'all') {
       return config.preflop.all[setting];
     }
@@ -228,37 +308,83 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
     return override !== undefined ? override : config.preflop.all[setting];
   };
 
-  // Update preflop setting
+  // Update preflop setting (with VS aggressor support)
   const updatePreflopSetting = (
     position: Position | 'all',
     setting: keyof typeof config.preflop.all,
-    value: any
+    value: any,
+    vsAggressor?: Position | 'default'
   ) => {
-    if (position === 'all') {
-      onChange({
-        ...config,
-        preflop: {
-          ...config.preflop,
-          all: {
-            ...config.preflop.all,
-            [setting]: value
+    // Handle VS aggressor settings
+    if (vsAggressor && vsAggressor !== 'default' && setting !== 'openSizes' && setting !== 'allowLimping' && setting !== 'allowOpenShove') {
+      if (position === 'all') {
+        // Update general VS aggressor setting
+        onChange({
+          ...config,
+          preflop: {
+            ...config.preflop,
+            all: {
+              ...config.preflop.all,
+              vsAggressor: {
+                ...config.preflop.all.vsAggressor,
+                [vsAggressor]: {
+                  ...config.preflop.all.vsAggressor?.[vsAggressor],
+                  [setting]: value
+                }
+              }
+            }
           }
-        }
-      });
+        });
+      } else {
+        // Update position-specific VS aggressor setting
+        onChange({
+          ...config,
+          preflop: {
+            ...config.preflop,
+            overrides: {
+              ...config.preflop.overrides,
+              [position]: {
+                ...config.preflop.overrides?.[position],
+                vsAggressor: {
+                  ...config.preflop.overrides?.[position]?.vsAggressor,
+                  [vsAggressor]: {
+                    ...config.preflop.overrides?.[position]?.vsAggressor?.[vsAggressor],
+                    [setting]: value
+                  }
+                }
+              }
+            }
+          }
+        });
+      }
     } else {
-      onChange({
-        ...config,
-        preflop: {
-          ...config.preflop,
-          overrides: {
-            ...config.preflop.overrides,
-            [position]: {
-              ...config.preflop.overrides?.[position],
+      // Regular setting update (no VS aggressor)
+      if (position === 'all') {
+        onChange({
+          ...config,
+          preflop: {
+            ...config.preflop,
+            all: {
+              ...config.preflop.all,
               [setting]: value
             }
           }
-        }
-      });
+        });
+      } else {
+        onChange({
+          ...config,
+          preflop: {
+            ...config.preflop,
+            overrides: {
+              ...config.preflop.overrides,
+              [position]: {
+                ...config.preflop.overrides?.[position],
+                [setting]: value
+              }
+            }
+          }
+        });
+      }
     }
   };
 
@@ -484,19 +610,162 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                 </div>
               )}
 
-              {/* Open Raise Sizes */}
-              <SizeChips
-                sizes={getEffectiveSetting(activePreflopPosition, 'openSizes') as number[]}
-                onChange={(sizes) => updatePreflopSetting(activePreflopPosition, 'openSizes', sizes)}
-                label="Open Raise Sizes"
-                suffix="bb"
-                placeholder="e.g., 2.5"
-              />
+              {/* Open Raise Sizes and Allow Limping (always shown, not VS-specific) */}
+              <div style={{
+                marginBottom: '1.5rem',
+                paddingBottom: '1.5rem',
+                borderBottom: `1px solid ${catppuccin.surface1}`
+              }}>
+                <SizeChips
+                  sizes={getEffectiveSetting(activePreflopPosition, 'openSizes') as number[]}
+                  onChange={(sizes) => updatePreflopSetting(activePreflopPosition, 'openSizes', sizes)}
+                  label="Open Raise Sizes (when first to act)"
+                  suffix="bb"
+                  placeholder="e.g., 2.5"
+                />
+                
+                {/* Allow Limping */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '1rem' }}>
+                  <div
+                    onClick={() => updatePreflopSetting(activePreflopPosition, 'allowLimping', !(getEffectiveSetting(activePreflopPosition, 'allowLimping') as boolean))}
+                    style={{
+                      width: '40px',
+                      height: '20px',
+                      borderRadius: '10px',
+                      background: getEffectiveSetting(activePreflopPosition, 'allowLimping') ? catppuccin.blue : catppuccin.surface2,
+                      position: 'relative',
+                      cursor: 'pointer',
+                      transition: 'background 0.2s',
+                      flexShrink: 0
+                    }}
+                  >
+                    <div style={{
+                      width: '16px',
+                      height: '16px',
+                      borderRadius: '50%',
+                      background: catppuccin.text,
+                      position: 'absolute',
+                      top: '2px',
+                      left: getEffectiveSetting(activePreflopPosition, 'allowLimping') ? '22px' : '2px',
+                      transition: 'left 0.2s'
+                    }} />
+                  </div>
+                  <label style={{ fontSize: '0.875rem', color: catppuccin.text }}>
+                    Allow Limping
+                  </label>
+                </div>
+                
+                {/* Allow Open Shove */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.75rem' }}>
+                  <div
+                    onClick={() => updatePreflopSetting(activePreflopPosition, 'allowOpenShove', !(getEffectiveSetting(activePreflopPosition, 'allowOpenShove') as boolean))}
+                    style={{
+                      width: '40px',
+                      height: '20px',
+                      borderRadius: '10px',
+                      background: getEffectiveSetting(activePreflopPosition, 'allowOpenShove') ? catppuccin.blue : catppuccin.surface2,
+                      position: 'relative',
+                      cursor: 'pointer',
+                      transition: 'background 0.2s',
+                      flexShrink: 0
+                    }}
+                  >
+                    <div style={{
+                      width: '16px',
+                      height: '16px',
+                      borderRadius: '50%',
+                      background: catppuccin.text,
+                      position: 'absolute',
+                      top: '2px',
+                      left: getEffectiveSetting(activePreflopPosition, 'allowOpenShove') ? '22px' : '2px',
+                      transition: 'left 0.2s'
+                    }} />
+                  </div>
+                  <label style={{ fontSize: '0.875rem', color: catppuccin.text, display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    Allow Open Shove
+                    <Tooltip content="Allows going all-in as an opening action without prior betting buildup. Common in short-stack and tournament play.">
+                      <InfoIcon />
+                    </Tooltip>
+                  </label>
+                </div>
+              </div>
+
+              {/* VS Aggressor Tabs */}
+              {getPossibleAggressors(activePreflopPosition).length > 0 && (
+                <>
+                  <div style={{
+                    display: 'flex',
+                    gap: '0.5rem',
+                    marginBottom: '1rem',
+                    flexWrap: 'wrap'
+                  }}>
+                    <button
+                      onClick={() => setActiveVsAggressor('default')}
+                      style={{
+                        padding: '0.25rem 0.75rem',
+                        background: activeVsAggressor === 'default' ? catppuccin.mauve : catppuccin.surface1,
+                        color: activeVsAggressor === 'default' ? catppuccin.base : catppuccin.text,
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '0.75rem',
+                        fontWeight: '600'
+                      }}
+                    >
+                      VS Default
+                    </button>
+                    {getPossibleAggressors(activePreflopPosition).map(pos => (
+                      <button
+                        key={pos}
+                        onClick={() => setActiveVsAggressor(pos)}
+                        style={{
+                          padding: '0.25rem 0.75rem',
+                          background: activeVsAggressor === pos ? catppuccin.mauve : catppuccin.surface1,
+                          color: activeVsAggressor === pos ? catppuccin.base : catppuccin.text,
+                          border: 'none',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          fontSize: '0.75rem',
+                          position: 'relative'
+                        }}
+                      >
+                        VS {pos}
+                        {/* Show indicator if VS overrides exist */}
+                        {((activePreflopPosition === 'all' && config.preflop.all.vsAggressor?.[pos]) ||
+                          (activePreflopPosition !== 'all' && config.preflop.overrides?.[activePreflopPosition]?.vsAggressor?.[pos])) && (
+                          <span style={{
+                            position: 'absolute',
+                            top: '-2px',
+                            right: '-2px',
+                            width: '6px',
+                            height: '6px',
+                            borderRadius: '50%',
+                            background: catppuccin.yellow
+                          }} />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  
+                  {activeVsAggressor !== 'default' && (
+                    <div style={{
+                      marginBottom: '0.75rem',
+                      padding: '0.5rem',
+                      background: catppuccin.mantle,
+                      borderRadius: '6px',
+                      fontSize: '0.75rem',
+                      color: catppuccin.subtext0
+                    }}>
+                      Settings when facing aggression from {activeVsAggressor}
+                    </div>
+                  )}
+                </>
+              )}
 
               {/* 3-Bet Sizes */}
               <SizeChips
-                sizes={getEffectiveSetting(activePreflopPosition, 'threeBet') as number[]}
-                onChange={(sizes) => updatePreflopSetting(activePreflopPosition, 'threeBet', sizes)}
+                sizes={getEffectiveSetting(activePreflopPosition, 'threeBet', activeVsAggressor) as number[]}
+                onChange={(sizes) => updatePreflopSetting(activePreflopPosition, 'threeBet', sizes, activeVsAggressor)}
                 label="3-Bet Sizes (Multipliers)"
                 suffix="x"
                 placeholder="e.g., 3.5"
@@ -504,7 +773,7 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
 
               {/* 4-Bet Sizes */}
               <div style={{ marginBottom: '1rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '2rem', marginBottom: '0.75rem' }}>
                   <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0 }}>
                     4-Bet Sizes (Multipliers)
                   </label>
@@ -512,14 +781,14 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                     <span style={{ marginRight: '0.5rem', fontSize: '0.75rem', color: catppuccin.subtext0 }}>All-in</span>
                     <div
                       onClick={() => updatePreflopSetting(activePreflopPosition, 'fourBet', {
-                        ...(getEffectiveSetting(activePreflopPosition, 'fourBet') as any),
-                        useAllIn: !(getEffectiveSetting(activePreflopPosition, 'fourBet') as any).useAllIn
-                      })}
+                        ...(getEffectiveSetting(activePreflopPosition, 'fourBet', activeVsAggressor) as any),
+                        useAllIn: !(getEffectiveSetting(activePreflopPosition, 'fourBet', activeVsAggressor) as any).useAllIn
+                      }, activeVsAggressor)}
                       style={{
                         width: '40px',
                         height: '20px',
                         borderRadius: '10px',
-                        background: (getEffectiveSetting(activePreflopPosition, 'fourBet') as any).useAllIn ? catppuccin.green : catppuccin.surface2,
+                        background: (getEffectiveSetting(activePreflopPosition, 'fourBet', activeVsAggressor) as any).useAllIn ? catppuccin.blue : catppuccin.surface2,
                         position: 'relative',
                         cursor: 'pointer',
                         transition: 'background 0.2s'
@@ -532,19 +801,19 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                         background: catppuccin.text,
                         position: 'absolute',
                         top: '2px',
-                        left: (getEffectiveSetting(activePreflopPosition, 'fourBet') as any).useAllIn ? '22px' : '2px',
+                        left: (getEffectiveSetting(activePreflopPosition, 'fourBet', activeVsAggressor) as any).useAllIn ? '22px' : '2px',
                         transition: 'left 0.2s'
                       }} />
                     </div>
                   </label>
                 </div>
-                {!(getEffectiveSetting(activePreflopPosition, 'fourBet') as any).useAllIn && (
+                {!(getEffectiveSetting(activePreflopPosition, 'fourBet', activeVsAggressor) as any).useAllIn && (
                   <SizeChips
-                    sizes={(getEffectiveSetting(activePreflopPosition, 'fourBet') as any).sizes || []}
+                    sizes={(getEffectiveSetting(activePreflopPosition, 'fourBet', activeVsAggressor) as any).sizes || []}
                     onChange={(sizes) => updatePreflopSetting(activePreflopPosition, 'fourBet', {
-                      ...(getEffectiveSetting(activePreflopPosition, 'fourBet') as any),
+                      ...(getEffectiveSetting(activePreflopPosition, 'fourBet', activeVsAggressor) as any),
                       sizes
-                    })}
+                    }, activeVsAggressor)}
                     label=""
                     suffix="x"
                     placeholder="e.g., 2.5"
@@ -553,9 +822,9 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
               </div>
 
               {/* 5-Bet Sizes - Only show if 4-bet is not all-in */}
-              {!(getEffectiveSetting(activePreflopPosition, 'fourBet') as any).useAllIn && (
+              {!(getEffectiveSetting(activePreflopPosition, 'fourBet', activeVsAggressor) as any).useAllIn && (
                 <div style={{ marginBottom: '1rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '2rem', marginBottom: '0.75rem' }}>
                     <label style={{ fontSize: '0.875rem', color: catppuccin.subtext0 }}>
                       5-Bet Sizes (Multipliers)
                     </label>
@@ -563,14 +832,14 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                       <span style={{ marginRight: '0.5rem', fontSize: '0.75rem', color: catppuccin.subtext0 }}>All-in</span>
                       <div
                         onClick={() => updatePreflopSetting(activePreflopPosition, 'fiveBet', {
-                          ...(getEffectiveSetting(activePreflopPosition, 'fiveBet') as any),
-                          useAllIn: !(getEffectiveSetting(activePreflopPosition, 'fiveBet') as any).useAllIn
-                        })}
+                          ...(getEffectiveSetting(activePreflopPosition, 'fiveBet', activeVsAggressor) as any),
+                          useAllIn: !(getEffectiveSetting(activePreflopPosition, 'fiveBet', activeVsAggressor) as any).useAllIn
+                        }, activeVsAggressor)}
                         style={{
                           width: '40px',
                           height: '20px',
                           borderRadius: '10px',
-                          background: (getEffectiveSetting(activePreflopPosition, 'fiveBet') as any).useAllIn ? catppuccin.green : catppuccin.surface2,
+                          background: (getEffectiveSetting(activePreflopPosition, 'fiveBet', activeVsAggressor) as any).useAllIn ? catppuccin.blue : catppuccin.surface2,
                           position: 'relative',
                           cursor: 'pointer',
                           transition: 'background 0.2s'
@@ -583,19 +852,19 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                           background: catppuccin.text,
                           position: 'absolute',
                           top: '2px',
-                          left: (getEffectiveSetting(activePreflopPosition, 'fiveBet') as any).useAllIn ? '22px' : '2px',
+                          left: (getEffectiveSetting(activePreflopPosition, 'fiveBet', activeVsAggressor) as any).useAllIn ? '22px' : '2px',
                           transition: 'left 0.2s'
                         }} />
                       </div>
                     </label>
                   </div>
-                  {!(getEffectiveSetting(activePreflopPosition, 'fiveBet') as any).useAllIn && (
+                  {!(getEffectiveSetting(activePreflopPosition, 'fiveBet', activeVsAggressor) as any).useAllIn && (
                     <SizeChips
-                      sizes={(getEffectiveSetting(activePreflopPosition, 'fiveBet') as any).sizes || []}
+                      sizes={(getEffectiveSetting(activePreflopPosition, 'fiveBet', activeVsAggressor) as any).sizes || []}
                       onChange={(sizes) => updatePreflopSetting(activePreflopPosition, 'fiveBet', {
-                        ...(getEffectiveSetting(activePreflopPosition, 'fiveBet') as any),
+                        ...(getEffectiveSetting(activePreflopPosition, 'fiveBet', activeVsAggressor) as any),
                         sizes
-                      })}
+                      }, activeVsAggressor)}
                       label=""
                       suffix="x"
                       placeholder="e.g., 2.2"
@@ -603,17 +872,6 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                   )}
                 </div>
               )}
-
-              {/* Allow Limping */}
-              <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.875rem', color: catppuccin.text }}>
-                <input
-                  type="checkbox"
-                  checked={getEffectiveSetting(activePreflopPosition, 'allowLimping') as boolean}
-                  onChange={(e) => updatePreflopSetting(activePreflopPosition, 'allowLimping', e.target.checked)}
-                  style={{ marginRight: '0.5rem' }}
-                />
-                Allow Limping
-              </label>
 
               {/* Clear Override Button */}
               {activePreflopPosition !== 'all' && config.preflop.overrides?.[activePreflopPosition] && (
@@ -741,27 +999,47 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                 
                 {/* Donk Betting - OOP only */}
                 <div style={{ marginTop: '1rem' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.875rem', color: catppuccin.text, marginBottom: '0.5rem' }}>
-                    <input
-                      type="checkbox"
-                      checked={config.postflop[activePostflopStreet].enableDonk || false}
-                      onChange={(e) => onChange({
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: catppuccin.text, marginBottom: '0.5rem' }}>
+                    <div
+                      onClick={() => onChange({
                         ...config,
                         postflop: {
                           ...config.postflop,
                           [activePostflopStreet]: {
                             ...config.postflop[activePostflopStreet],
-                            enableDonk: e.target.checked
+                            enableDonk: !config.postflop[activePostflopStreet].enableDonk
                           }
                         }
                       })}
-                      style={{ marginRight: '0.5rem' }}
-                    />
-                    Enable Donk Betting
-                    <Tooltip content="Allow OOP player to lead into previous street's aggressor">
-                      <InfoIcon />
-                    </Tooltip>
-                  </label>
+                      style={{
+                        width: '40px',
+                        height: '20px',
+                        borderRadius: '10px',
+                        background: config.postflop[activePostflopStreet].enableDonk ? catppuccin.blue : catppuccin.surface2,
+                        position: 'relative',
+                        cursor: 'pointer',
+                        transition: 'background 0.2s',
+                        flexShrink: 0
+                      }}
+                    >
+                      <div style={{
+                        width: '16px',
+                        height: '16px',
+                        borderRadius: '50%',
+                        background: catppuccin.text,
+                        position: 'absolute',
+                        top: '2px',
+                        left: config.postflop[activePostflopStreet].enableDonk ? '22px' : '2px',
+                        transition: 'left 0.2s'
+                      }} />
+                    </div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                      Enable Donk Betting
+                      <Tooltip content="Allow OOP player to lead into previous street's aggressor">
+                        <InfoIcon />
+                      </Tooltip>
+                    </label>
+                  </div>
                   
                   {config.postflop[activePostflopStreet].enableDonk && (
                     <SizeChips
@@ -966,15 +1244,33 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                 />
               </div>
 
-              <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.875rem', color: catppuccin.text }}>
-                <input
-                  type="checkbox"
-                  checked={config.straddle || false}
-                  onChange={(e) => onChange({ ...config, straddle: e.target.checked })}
-                  style={{ marginRight: '0.5rem' }}
-                />
-                Enable Straddle
-              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: catppuccin.text }}>
+                <div
+                  onClick={() => onChange({ ...config, straddle: !config.straddle })}
+                  style={{
+                    width: '40px',
+                    height: '20px',
+                    borderRadius: '10px',
+                    background: config.straddle ? catppuccin.blue : catppuccin.surface2,
+                    position: 'relative',
+                    cursor: 'pointer',
+                    transition: 'background 0.2s',
+                    flexShrink: 0
+                  }}
+                >
+                  <div style={{
+                    width: '16px',
+                    height: '16px',
+                    borderRadius: '50%',
+                    background: catppuccin.text,
+                    position: 'absolute',
+                    top: '2px',
+                    left: config.straddle ? '22px' : '2px',
+                    transition: 'left 0.2s'
+                  }} />
+                </div>
+                <label>Enable Straddle</label>
+              </div>
             </div>
 
               {/* Rake Settings */}
@@ -1102,37 +1398,77 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                   />
                 </div>
 
-                <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.875rem', color: catppuccin.text, marginBottom: '0.5rem' }}>
-                  <input
-                    type="checkbox"
-                    checked={config.rake.noFlopNoDrop}
-                    onChange={(e) => onChange({
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: catppuccin.text, marginBottom: '0.5rem' }}>
+                  <div
+                    onClick={() => onChange({
                       ...config,
-                      rake: { ...config.rake, noFlopNoDrop: e.target.checked }
+                      rake: { ...config.rake, noFlopNoDrop: !config.rake.noFlopNoDrop }
                     })}
-                    style={{ marginRight: '0.5rem' }}
-                  />
-                  No Flop, No Drop
-                  <Tooltip content="No rake is taken if the hand ends preflop (standard online policy)">
-                    <InfoIcon />
-                  </Tooltip>
-                </label>
+                    style={{
+                      width: '40px',
+                      height: '20px',
+                      borderRadius: '10px',
+                      background: config.rake.noFlopNoDrop ? catppuccin.blue : catppuccin.surface2,
+                      position: 'relative',
+                      cursor: 'pointer',
+                      transition: 'background 0.2s',
+                      flexShrink: 0
+                    }}
+                  >
+                    <div style={{
+                      width: '16px',
+                      height: '16px',
+                      borderRadius: '50%',
+                      background: catppuccin.text,
+                      position: 'absolute',
+                      top: '2px',
+                      left: config.rake.noFlopNoDrop ? '22px' : '2px',
+                      transition: 'left 0.2s'
+                    }} />
+                  </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    No Flop, No Drop
+                    <Tooltip content="No rake is taken if the hand ends preflop (standard online policy)">
+                      <InfoIcon />
+                    </Tooltip>
+                  </label>
+                </div>
 
-                <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.875rem', color: catppuccin.text }}>
-                  <input
-                    type="checkbox"
-                    checked={config.rake.preflopRake}
-                    onChange={(e) => onChange({
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: catppuccin.text }}>
+                  <div
+                    onClick={() => onChange({
                       ...config,
-                      rake: { ...config.rake, preflopRake: e.target.checked }
+                      rake: { ...config.rake, preflopRake: !config.rake.preflopRake }
                     })}
-                    style={{ marginRight: '0.5rem' }}
-                  />
-                  Rake Preflop
-                  <Tooltip content="Whether to take rake on pots that end preflop (some sites do this)">
-                    <InfoIcon />
-                  </Tooltip>
-                </label>
+                    style={{
+                      width: '40px',
+                      height: '20px',
+                      borderRadius: '10px',
+                      background: config.rake.preflopRake ? catppuccin.blue : catppuccin.surface2,
+                      position: 'relative',
+                      cursor: 'pointer',
+                      transition: 'background 0.2s',
+                      flexShrink: 0
+                    }}
+                  >
+                    <div style={{
+                      width: '16px',
+                      height: '16px',
+                      borderRadius: '50%',
+                      background: catppuccin.text,
+                      position: 'absolute',
+                      top: '2px',
+                      left: config.rake.preflopRake ? '22px' : '2px',
+                      transition: 'left 0.2s'
+                    }} />
+                  </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    Rake Preflop
+                    <Tooltip content="Whether to take rake on pots that end preflop (some sites do this)">
+                      <InfoIcon />
+                    </Tooltip>
+                  </label>
+                </div>
               </div>
             </div>
 
@@ -1244,18 +1580,36 @@ export const TableSettings: React.FC<TableSettingsProps> = ({ config, onChange, 
                   ICM Settings
                 </h3>
 
-                <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.875rem', color: catppuccin.text, marginBottom: '1rem' }}>
-                  <input
-                    type="checkbox"
-                    checked={config.icm?.enabled || false}
-                    onChange={(e) => onChange({
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: catppuccin.text, marginBottom: '1rem' }}>
+                  <div
+                    onClick={() => onChange({
                       ...config,
-                      icm: { ...config.icm, enabled: e.target.checked }
+                      icm: { ...config.icm, enabled: !config.icm?.enabled }
                     })}
-                    style={{ marginRight: '0.5rem' }}
-                  />
-                  Enable ICM Calculations
-                </label>
+                    style={{
+                      width: '40px',
+                      height: '20px',
+                      borderRadius: '10px',
+                      background: config.icm?.enabled ? catppuccin.blue : catppuccin.surface2,
+                      position: 'relative',
+                      cursor: 'pointer',
+                      transition: 'background 0.2s',
+                      flexShrink: 0
+                    }}
+                  >
+                    <div style={{
+                      width: '16px',
+                      height: '16px',
+                      borderRadius: '50%',
+                      background: catppuccin.text,
+                      position: 'absolute',
+                      top: '2px',
+                      left: config.icm?.enabled ? '22px' : '2px',
+                      transition: 'left 0.2s'
+                    }} />
+                  </div>
+                  <label>Enable ICM Calculations</label>
+                </div>
 
                 {config.icm?.enabled && (
                   <div>

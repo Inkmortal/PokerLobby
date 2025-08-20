@@ -184,8 +184,28 @@ export class PokerGameEngine {
     return pending;
   }
 
-  // Get effective setting for a position (with inheritance)
-  private getEffectivePreflopSetting(position: Position, setting: keyof typeof this.tableConfig.preflop.all) {
+  // Get effective setting for a position (with inheritance and VS aggressor support)
+  private getEffectivePreflopSetting(
+    position: Position, 
+    setting: keyof typeof this.tableConfig.preflop.all,
+    vsAggressor?: Position | null
+  ) {
+    // For open sizes and limping, VS doesn't apply
+    if (setting === 'openSizes' || setting === 'allowLimping' || !vsAggressor) {
+      const override = this.tableConfig.preflop.overrides?.[position]?.[setting];
+      return override !== undefined ? override : this.tableConfig.preflop.all[setting];
+    }
+    
+    // For 3bet/4bet/5bet, check VS aggressor settings
+    // Check position-specific VS aggressor override first
+    const posVsOverride = this.tableConfig.preflop.overrides?.[position]?.vsAggressor?.[vsAggressor]?.[setting];
+    if (posVsOverride !== undefined) return posVsOverride;
+    
+    // Check general VS aggressor setting
+    const generalVsOverride = this.tableConfig.preflop.all.vsAggressor?.[vsAggressor]?.[setting];
+    if (generalVsOverride !== undefined) return generalVsOverride;
+    
+    // Fall back to regular position override or default
     const override = this.tableConfig.preflop.overrides?.[position]?.[setting];
     return override !== undefined ? override : this.tableConfig.preflop.all[setting];
   }
@@ -271,6 +291,21 @@ export class PokerGameEngine {
           });
         }
       });
+      
+      // Add open shove option if allowed
+      const allowOpenShove = this.getEffectivePreflopSetting(position, 'allowOpenShove') as boolean;
+      if (allowOpenShove && player.stack > 0) {
+        const allinTotal = player.stack + player.betInRound;
+        // Only add if it's significantly different from normal opens (e.g., > 5BB)
+        const hasNormalOpenNearAllIn = openSizes.some(size => Math.abs(size - allinTotal) < 1);
+        if (!hasNormalOpenNearAllIn && allinTotal > 5) {
+          betRaiseOptions.push({ 
+            action: 'allin', 
+            amount: allinTotal, 
+            label: `Jam ${this.formatBB(allinTotal)}` 
+          });
+        }
+      }
     } else if (!hasAggressor && !isPreflop) {
       // Postflop bet - determine if IP or OOP
       const isIP = this.isInPositionPostflop(position, state);
@@ -352,14 +387,15 @@ export class PokerGameEngine {
       // Check configuration for automatic all-in
       if (isPreflop && hasAggressor) {
         const bettingLevel = this.getBettingLevel(state);
+        const vsAggressor = state.lastAggressor;
         
         if (bettingLevel === 4) {
           // Next action would be 4-bet - check if all-in is enabled
-          const fourBet = this.getEffectivePreflopSetting(position, 'fourBet') as any;
+          const fourBet = this.getEffectivePreflopSetting(position, 'fourBet', vsAggressor) as any;
           shouldAddAllIn = fourBet.useAllIn;
         } else if (bettingLevel === 5) {
           // Next action would be 5-bet - check if all-in is enabled
-          const fiveBet = this.getEffectivePreflopSetting(position, 'fiveBet') as any;
+          const fiveBet = this.getEffectivePreflopSetting(position, 'fiveBet', vsAggressor) as any;
           if (fiveBet.useAllIn) {
             // Check threshold if set
             if (fiveBet.allInThreshold && player.stack < fiveBet.allInThreshold) {
@@ -517,6 +553,12 @@ export class PokerGameEngine {
     const initialState = this.createInitialState();
     const firstToAct = this.positions.find(p => p !== 'SB' && p !== 'BB') || this.positions[0];
     
+    // Initialize ranges - each position starts with empty strategy (user will define)
+    const initialRanges: { [position: string]: any } = {};
+    // Only the first position to act needs a range at the root
+    // Other positions will get ranges as the tree develops
+    initialRanges[firstToAct] = {}; // Empty = user needs to define the opening strategy
+    
     return {
       id: 'root',
       position: 'SB' as Position, // Placeholder
@@ -524,7 +566,7 @@ export class PokerGameEngine {
       amount: undefined,
       stateBefore: initialState,
       availableActions: this.getAvailableActions(initialState, firstToAct),
-      ranges: {},
+      ranges: initialRanges,
       boardCards: [], // Empty = wildcard board
       children: [],
       parent: null,
@@ -532,27 +574,36 @@ export class PokerGameEngine {
     };
   }
 
-  // Create child node
+  // Create child node for the NEXT position to act
   public createChildNode(
     parent: ActionNode,
-    position: Position,
-    action: ActionType,
+    action: ActionType,  // Action taken by parent.position
     amount?: number
   ): ActionNode {
-    // The state after parent's action becomes the state before this action
-    const stateAfterParent = parent.action === 'start' ? 
+    // Apply the action taken by parent.position to get the new state
+    const stateAfterAction = parent.action === 'start' ? 
       parent.stateBefore : 
-      this.applyAction(parent.stateBefore, parent.position, parent.action, parent.amount);
+      this.applyAction(parent.stateBefore, parent.position, action, amount);
+    
+    // Determine who needs to act next
+    const nextToAct = this.getPlayersStillToAct(stateAfterAction, parent.position);
+    const nextPosition = nextToAct[0] || parent.position; // Fallback if no one left
+    
+    // Deep copy parent ranges to prevent corruption between nodes
+    const childRanges = structuredClone ? structuredClone(parent.ranges) : JSON.parse(JSON.stringify(parent.ranges));
+    
+    // Each node stores independent ranges
+    // The child node will store the strategy for nextPosition
     
     const child: ActionNode = {
-      id: `${parent.id}_${position}_${action}_${amount || ''}`,
-      position,
-      action,
+      id: `${parent.id}_${action}_${amount || ''}`,
+      position: nextPosition,  // WHO needs to act at this node
+      action,                   // How we got here (action taken by parent.position)
       amount,
-      stateBefore: stateAfterParent,
-      availableActions: this.getAvailableActions(stateAfterParent, position),
-      ranges: { ...parent.ranges },
-      boardCards: action === 'advance' ? [] : [...parent.boardCards], // Advance nodes start with empty board
+      stateBefore: stateAfterAction,
+      availableActions: this.getAvailableActions(stateAfterAction, nextPosition),
+      ranges: childRanges,
+      boardCards: action === 'advance' ? [] : [...parent.boardCards],
       children: [],
       parent,
       depth: parent.depth + 1
@@ -646,25 +697,28 @@ export class PokerGameEngine {
     // Get betting level - this tells us what the NEXT bet would be
     const bettingLevel = this.getBettingLevel(state);
     
+    // Get the last aggressor for VS-specific settings
+    const vsAggressor = state.lastAggressor;
+    
     if (bettingLevel === 2) {
-      // Next action would be 2-bet (open)
+      // Next action would be 2-bet (open) - no aggressor yet
       const openSizes = this.getEffectivePreflopSetting(position, 'openSizes') as number[];
       return openSizes;
     } else if (bettingLevel === 3) {
-      // Next action would be 3-bet
-      const threeBet = this.getEffectivePreflopSetting(position, 'threeBet') as number[];
+      // Next action would be 3-bet - use VS aggressor if available
+      const threeBet = this.getEffectivePreflopSetting(position, 'threeBet', vsAggressor) as number[];
       return threeBet;
     } else if (bettingLevel === 4) {
-      // Next action would be 4-bet
-      const fourBet = this.getEffectivePreflopSetting(position, 'fourBet') as any;
+      // Next action would be 4-bet - use VS aggressor if available
+      const fourBet = this.getEffectivePreflopSetting(position, 'fourBet', vsAggressor) as any;
       // If all-in is enabled, return empty array (all-in will be added separately)
       if (fourBet.useAllIn) {
         return [];
       }
       return fourBet.sizes || [];
     } else if (bettingLevel === 5) {
-      // Next action would be 5-bet
-      const fiveBet = this.getEffectivePreflopSetting(position, 'fiveBet') as any;
+      // Next action would be 5-bet - use VS aggressor if available
+      const fiveBet = this.getEffectivePreflopSetting(position, 'fiveBet', vsAggressor) as any;
       // If all-in is enabled, return empty array (all-in will be added separately)
       if (fiveBet.useAllIn) {
         return [];

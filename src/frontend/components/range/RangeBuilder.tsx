@@ -88,7 +88,8 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
           useAllIn: false,
           allInThreshold: 60
         },
-        allowLimping: false
+        allowLimping: false,
+        allowOpenShove: false
       },
       overrides: {}
     },
@@ -183,6 +184,7 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
   const [paintFrequency, setPaintFrequency] = useState<number>(100);
   const [showImportExport, setShowImportExport] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showBBAmounts, setShowBBAmounts] = useState(true); // Toggle for BB vs configured sizes
 
   // Calculate action percentages
   const calculateActionPercentages = () => {
@@ -233,8 +235,18 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
             selectedNode: clickedNode
           }));
           
-          // Load the range data for this node
-          setRangeData(clickedNode.ranges[clickedNode.position] || {});
+          // When clicking an action card, we want to see the range of the position that TOOK that action
+          // That range is stored at the PARENT node (where they were deciding)
+          if (clickedNode.parent && clickedNode.position === position) {
+            // Load the range from parent node for this position
+            console.log(`Loading ${position}'s range from parent node`);
+            setRangeData(clickedNode.parent.ranges[position] || {});
+          } else {
+            // For other cases, load the range for who needs to act at this node
+            const playersToAct = gameEngine.getPlayersStillToAct(clickedNode.stateBefore);
+            const actingPosition = playersToAct[0] || clickedNode.position;
+            setRangeData(clickedNode.ranges[actingPosition] || {});
+          }
           return;
         }
         
@@ -273,7 +285,8 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
         );
         
         if (!newBranch) {
-          newBranch = gameEngine.createChildNode(targetNode, position, action as ActionType, amount);
+          // Create node for NEXT position to act after this action
+          newBranch = gameEngine.createChildNode(targetNode, action as ActionType, amount);
         }
         
         console.log(`Creating new branch: ${newBranch.id}`);
@@ -295,7 +308,6 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
           // Create a new node for the street transition
           const streetNode = gameEngine.createChildNode(
             newBranch,
-            newBranch.position,
             'advance' as ActionType,
             undefined
           );
@@ -321,18 +333,12 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
             selectedNode: newBranch
           }));
           
-          // Load the range for the NEXT position to act after this action
-          const stateAfter = gameEngine.applyAction(
-            newBranch.stateBefore,
-            newBranch.position,
-            newBranch.action as ActionType,
-            newBranch.amount
-          );
-          const nextToAct = gameEngine.getPlayersStillToAct(stateAfter);
-          if (nextToAct.length > 0) {
-            setRangeData(newBranch.ranges[nextToAct[0]] || {});
+          // Load the range for whoever needs to act at this new branch node
+          const actorsAtBranch = gameEngine.getPlayersStillToAct(newBranch.stateBefore);
+          if (actorsAtBranch.length > 0) {
+            setRangeData(newBranch.ranges[actorsAtBranch[0]] || {});
           } else {
-            // If no one left to act, keep showing the last actor's range
+            // If no one left to act, keep showing the position that needs to act
             setRangeData(newBranch.ranges[position] || {});
           }
         }
@@ -402,23 +408,25 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
       
       // Check if this default node already exists
       let defaultNode = currentNode.children.find(
-        child => child.position === gapPosition && child.action === defaultAction
+        child => child.action === defaultAction
       );
       
       if (!defaultNode) {
-        defaultNode = gameEngine.createChildNode(currentNode, gapPosition, defaultAction as ActionType);
+        defaultNode = gameEngine.createChildNode(currentNode, defaultAction as ActionType);
       }
       
       currentNode = defaultNode;
     }
     
     // Now add the actual clicked action
+    // Find child node created by this action
     let targetNode = currentNode.children.find(
-      child => child.position === position && child.action === action && child.amount === amount
+      child => child.action === action && child.amount === amount
     );
     
     if (!targetNode) {
-      targetNode = gameEngine.createChildNode(currentNode, position, action as ActionType, amount);
+      // Create node for NEXT position to act after this action
+      targetNode = gameEngine.createChildNode(currentNode, action as ActionType, amount);
     }
     
     console.log(`Setting current node to: ${targetNode.id}`);
@@ -441,7 +449,6 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
       // This node represents the start of the new street with wildcard board
       const streetNode = gameEngine.createChildNode(
         targetNode,
-        targetNode.position, // Use last actor's position
         'advance' as ActionType, // Special action type for street transitions
         undefined
       );
@@ -461,17 +468,23 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
       const firstToAct = gameEngine.getPlayersStillToAct(streetNode.stateBefore)[0];
       setRangeData(streetNode.ranges[firstToAct] || {});
     } else {
-      // Update tree to final node
-      // When making a decision, the new current node is also the selected node
+      // Update tree - the action node represents the STATE AFTER the action
+      // Current node = where we are in the tree (after this action)
+      // Selected node = what we're viewing (also this node initially)
       setGameTree(prev => ({
         ...prev,
         currentNode: targetNode,
         selectedNode: targetNode
       }));
       
-      // Load the range for the NEXT position to act, not the one that just acted
-      const nextToAct = gameEngine.getPlayersStillToAct(stateAfterAction);
+      // The targetNode represents the game state AFTER the action was taken
+      // We need to load the range for whoever needs to act at this new state
+      const nextToAct = gameEngine.getPlayersStillToAct(stateAfterAction, position);
+      console.log(`After ${position} ${action}, next to act: ${nextToAct.join(', ')}`);
+      
       if (nextToAct.length > 0) {
+        // Load range for whoever needs to act at this decision point
+        console.log(`Loading range for ${nextToAct[0]} at node ${targetNode.id}`);
         setRangeData(targetNode.ranges[nextToAct[0]] || {});
       } else {
         // If no one left to act, keep showing the last actor's range
@@ -481,50 +494,30 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
   };
 
   const handleNodeSelect = (targetNode: ActionNode) => {
-    // This is called when clicking on a past action to view its range
+    // This is called when clicking on a node to view its range
+    console.log(`handleNodeSelect called for node: ${targetNode.id}, position: ${targetNode.position}, action: ${targetNode.action}`);
+    
+    // Update selected node for UI highlighting
     setGameTree(prev => ({
       ...prev,
-      selectedNode: targetNode  // Only update selectedNode for viewing ranges
+      selectedNode: targetNode
     }));
     
-    // Load the range for the position that acted at this node
-    const positionRange = targetNode.ranges[targetNode.position] || {};
-    setRangeData(positionRange);
+    // Load the range for the position at this decision node
+    console.log(`Loading range for ${targetNode.position} from node ${targetNode.id}`);
+    setRangeData(targetNode.ranges[targetNode.position] || {});
   };
 
   // Update selected node's range when range data changes
   useEffect(() => {
     if (gameTree.selectedNode) {
-      // Determine which position's range we're editing
-      let rangePosition = gameTree.selectedNode.position;
+      // SIMPLE: Save range for the node's position
+      const position = gameTree.selectedNode.position;
       
-      // If this is the current node (where we're building the tree), 
-      // we need to show the range for the NEXT position to act
-      if (gameTree.selectedNode === gameTree.currentNode) {
-        if (gameTree.selectedNode.action === 'start') {
-          // At the root, the range is for the first position to act
-          const positions = getPositions();
-          rangePosition = positions[0];
-        } else {
-          // For any other current node, determine who's next to act AFTER this node's action
-          const state = gameEngine.applyAction(
-            gameTree.selectedNode.stateBefore,
-            gameTree.selectedNode.position,
-            gameTree.selectedNode.action as ActionType,
-            gameTree.selectedNode.amount
-          );
-          const nextToAct = gameEngine.getPlayersStillToAct(state);
-          if (nextToAct.length > 0) {
-            rangePosition = nextToAct[0];
-          }
-          // If no one left to act, keep the position that just acted
-        }
-      }
-      // For past nodes (not current), use the position that acted at that node
-      
+      console.log(`Saving range for ${position} at node ${gameTree.selectedNode.id}`);
       const updatedRanges = {
         ...gameTree.selectedNode.ranges,
-        [rangePosition]: rangeData
+        [position]: rangeData
       };
       
       gameTree.selectedNode.ranges = updatedRanges;
@@ -682,6 +675,60 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
         />
       )}
 
+      {/* Bet Display Toggle */}
+      <div style={{
+        background: catppuccin.surface0,
+        padding: '0.5rem 1rem',
+        borderBottom: `1px solid ${catppuccin.surface1}`,
+        display: 'flex',
+        alignItems: 'center',
+        gap: '0.75rem'
+      }}>
+        <label style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.5rem',
+          fontSize: '0.875rem',
+          color: catppuccin.text,
+          cursor: 'pointer'
+        }}>
+          <div
+            onClick={() => setShowBBAmounts(!showBBAmounts)}
+            style={{
+              position: 'relative',
+              width: '40px',
+              height: '22px',
+              backgroundColor: showBBAmounts ? catppuccin.blue : catppuccin.surface1,
+              borderRadius: '11px',
+              cursor: 'pointer',
+              transition: 'background-color 0.2s'
+            }}
+          >
+            <div style={{
+              position: 'absolute',
+              top: '2px',
+              left: showBBAmounts ? '20px' : '2px',
+              width: '18px',
+              height: '18px',
+              backgroundColor: catppuccin.text,
+              borderRadius: '50%',
+              transition: 'left 0.2s'
+            }} />
+          </div>
+          <span>Show amounts in BB</span>
+        </label>
+        <span style={{
+          fontSize: '0.75rem',
+          color: catppuccin.subtext0,
+          marginLeft: '0.5rem'
+        }}>
+          {showBBAmounts ? 
+            'Displaying all amounts in big blinds' : 
+            'Showing configured bet sizes (multipliers & percentages)'
+          }
+        </span>
+      </div>
+
       {/* Action Sequence Bar */}
       <ActionSequenceBar
         sequence={getActionSequenceFromPath()}
@@ -689,42 +736,30 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
         gameEngine={gameEngine}
         selectedNode={gameTree.selectedNode}
         currentNode={gameTree.currentNode}
+        showBBAmounts={showBBAmounts}
         onActionSelect={handleActionSelect}
         onPositionClick={(position: Position, cardIndex?: number, isCurrentNode?: boolean) => {
-          // If this is the current node (the next decision point), select it
+          console.log(`onPositionClick: position=${position}, cardIndex=${cardIndex}, isCurrentNode=${isCurrentNode}`);
+          
           if (isCurrentNode) {
-            setGameTree(prev => ({
-              ...prev,
-              selectedNode: prev.currentNode
-            }));
-            
-            // For the current node, we need to determine which position is next to act
-            // The current node represents the state after the last action
-            const nextToAct = position; // The position parameter tells us who is next to act
-            const currentRange = gameTree.currentNode.ranges[nextToAct] || {};
-            setRangeData(currentRange);
-            return;
-          }
-          
-          // Navigate to the node for this position if it exists
-          const pathSequence = getActionSequenceFromPath();
-          
-          // Use the card index if provided to navigate to the exact card
-          if (cardIndex !== undefined && cardIndex < pathSequence.length) {
-            // Navigate to the specific node at this index
-            let targetNode = gameTree.root;
-            for (let i = 0; i <= cardIndex; i++) {
-              const step = pathSequence[i];
-              const child = targetNode.children.find(
-                c => c.position === step.position && c.action === step.action && c.amount === step.amount
-              );
-              if (child) {
-                targetNode = child;
+            // Clicking on the current (blue) node
+            console.log(`Selecting current node`);
+            handleNodeSelect(gameTree.currentNode);
+          } else if (cardIndex !== undefined) {
+            // Clicking on a past action card
+            const pathSequence = getActionSequenceFromPath();
+            // Filter out advance nodes to match ActionSequenceBar's indexing
+            const visibleActions = pathSequence.filter(n => n.action !== 'advance' && n.action !== 'start');
+            if (cardIndex < visibleActions.length) {
+              // Select the PARENT node where the decision was made
+              const actionNode = visibleActions[cardIndex];
+              const decisionNode = actionNode.parent;
+              if (decisionNode) {
+                console.log(`Selecting decision node at index ${cardIndex}: ${decisionNode.id}`);
+                handleNodeSelect(decisionNode);
               }
             }
-            handleNodeSelect(targetNode);
           }
-          // If position hasn't acted yet, just highlight it visually (handled by ActionSequenceBar)
         }}
         onBoardSelect={(street: 'flop' | 'turn' | 'river', cards: string[]) => {
           // Find the advance node for this specific street

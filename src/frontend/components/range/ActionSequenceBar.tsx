@@ -11,6 +11,7 @@ interface ActionSequenceBarProps {
   gameEngine: PokerGameEngine;
   selectedNode?: ActionNode;  // The node whose range is currently being viewed
   currentNode?: ActionNode;   // The current node in the tree building
+  showBBAmounts?: boolean;    // Toggle for showing BB vs configured sizes
   onActionSelect: (position: Position, action: string, amount?: number, cardIndex?: number, status?: string, isViewOnly?: boolean) => void;
   onPositionClick: (position: Position, cardIndex?: number, isCurrentNode?: boolean) => void;
   onBoardSelect?: (street: 'flop' | 'turn' | 'river', cards: string[]) => void;
@@ -46,6 +47,7 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
   gameEngine,
   selectedNode,
   currentNode,
+  showBBAmounts = true,
   onActionSelect,
   onPositionClick,
   onBoardSelect,
@@ -73,16 +75,71 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
   // Scrollbar ref
   const containerRef = useRef<HTMLDivElement>(null);
   
+  // Helper function to format action labels based on display preference
+  const formatActionLabel = (
+    action: string, 
+    amount?: number, 
+    state?: BettingRoundState,
+    originalLabel?: string
+  ): string => {
+    // If no amount, just return the action (fold, check)
+    if (!amount) {
+      return action;
+    }
+    
+    // Always show opens, calls, and all-ins in BB (no units shown)
+    if (action === 'open' || action === 'call' || action === 'allin') {
+      return `${action} ${amount}`;
+    }
+    
+    // When showing BB amounts, everything is in BB
+    if (showBBAmounts) {
+      return `${action} ${amount}`;
+    }
+    
+    // Otherwise, show configured format (multipliers/percentages)
+    if (action === 'raise' && state) {
+      // Calculate the multiplier: raise amount / amount to call (the last bet/raise)
+      const lastBet = state.amountToCall;
+      if (lastBet > 0) {
+        const multiplier = (amount / lastBet).toFixed(1);
+        // Remove trailing .0
+        const cleanMultiplier = multiplier.endsWith('.0') ? 
+          multiplier.slice(0, -2) : multiplier;
+        return `${action} ${cleanMultiplier}x`;
+      }
+      // Fallback to BB if no last bet
+      return `${action} ${amount}`;
+    }
+    
+    if (action === 'bet' && state) {
+      // Calculate percentage of pot
+      const pot = state.pot;
+      if (pot > 0) {
+        const percentage = Math.round((amount / pot) * 100);
+        return `${action} ${percentage}%`;
+      }
+      // Fallback to BB if no pot
+      return `${action} ${amount}`;
+    }
+    
+    // Default to BB for other cases
+    return `${action} ${amount}`;
+  };
 
   useEffect(() => {
     console.log('ActionSequenceBar received sequence:', sequence);
+    console.log('showBBAmounts:', showBBAmounts);
     
     // Build display states array
     const states: PositionDisplayState[] = [];
-    let cardIndex = 0;  // Unique index for each card
+    let cardIndex = 0;  // Index for actual action cards (not separators)
     let lastStreet = 'preflop';
     
-    // Process the action sequence - just read from saved states!
+    // Keep track of the actual sequence index for each card
+    const visibleActions = sequence.filter(n => n.action !== 'advance');
+    
+    // Process the action sequence - each node is a DECISION POINT
     sequence.forEach((actionNode, idx) => {
       // Special handling for advance nodes - create street separator
       if (actionNode.action === 'advance') {
@@ -128,25 +185,45 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
         lastStreet = currentStreet;
       }
       
-      const playerBefore = actionNode.stateBefore.players.get(actionNode.position);
+      // Each node represents a decision point
+      // BUT for display in the bar, we want to show the action that was taken
+      // So for non-root nodes, we show the PARENT's position (who took the action)
+      
+      // Skip the root node - it's just the starting point
+      if (actionNode.action === 'start') {
+        return;
+      }
+      
+      // The action shown is how we got TO this node
+      // It was taken BY the parent node's position
+      const actorPosition = actionNode.parent?.position;
+      if (!actorPosition) return; // Shouldn't happen for non-root nodes
+      
+      // Get the player state for the actor
+      const playerBefore = actionNode.parent.stateBefore.players.get(actorPosition);
       if (!playerBefore) return;
 
-      // Use the SAVED available actions from the node!
-      const availableActions = actionNode.availableActions;
+      // Use the parent's available actions (what the actor could have chosen)
+      const availableActions = actionNode.parent.availableActions || [];
 
+      // Find the index of this node in the visible actions array
+      const visibleIndex = visibleActions.findIndex(n => n === actionNode);
+      
       // Add the display state for this past action
       states.push({
-        index: cardIndex++,  // Assign unique index
-        position: actionNode.position,
+        index: visibleIndex >= 0 ? visibleIndex : cardIndex++,  // Use actual sequence index
+        position: actorPosition,  // Who took the action
         status: playerBefore.isFolded ? 'inactive' : 'past',
-        selectedAction: actionNode.action,
+        selectedAction: actionNode.action,  // What they chose
         selectedAmount: actionNode.amount,
-        availableActions,
+        availableActions,  // What they could have chosen
         gameState: {
-          pot: actionNode.stateBefore.pot,
+          pot: actionNode.parent.stateBefore.pot,
           stack: playerBefore.stack
-        }
-      });
+        },
+        stateBefore: actionNode.parent.stateBefore,  // The state when they acted
+        actualNode: actionNode.parent  // Store the PARENT node where the decision was made!
+      } as any);
     });
 
     // Only add cards for pending players if betting round is NOT over
@@ -168,7 +245,8 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
         isNewStreet ? undefined : lastActor
       );
 
-      // Build cards for pending players
+      // Build cards for ALL pending players (decision points)
+      // Show current AND future so users can skip ahead
       pendingPlayers.forEach((pos, idx) => {
         const player = currentBettingState.players.get(pos);
         if (!player) return;
@@ -178,16 +256,17 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
 
         states.push({
           index: cardIndex++,  // Continue unique indexing
-          position: pos,
-          status: idx === 0 ? 'current' : 'future',
-          selectedAction: null,
+          position: pos,  // Who needs to decide
+          status: idx === 0 ? 'current' : 'future',  // First is current, rest are future
+          selectedAction: null,  // No action chosen yet
           selectedAmount: undefined,
           availableActions,
           gameState: {
             pot: currentBettingState.pot,
             stack: player.stack
-          }
-        });
+          },
+          stateBefore: currentBettingState  // Add the current betting state
+        } as any);
       });
     } else {
       // Betting round is complete - show indicator that action moves to next street
@@ -195,23 +274,28 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
     }
 
     setPositionStates(states);
-  }, [sequence, positions, tableConfig]);
+  }, [sequence, positions, tableConfig, showBBAmounts]);
 
   const handleActionClick = (state: PositionDisplayState, action: string, amount?: number) => {
-    // When clicking an action button, it's an edit (not view-only)
+    // When clicking an action button, we're either:
+    // 1. Editing a past action (changing what was chosen)
+    // 2. Making a new choice (current/future)
     onActionSelect(state.position, action, amount, state.index, state.status, false);
   };
   
   const handlePositionClick = (state: PositionDisplayState) => {
+    console.log(`ActionSequenceBar handlePositionClick: status=${state.status}, index=${state.index}, position=${state.position}`);
+    
     // Don't allow clicking on future nodes (can't select what hasn't happened yet)
     if (state.status === 'future') {
       return;
     }
     
     // When clicking a past action card (not on a button), it's view-only
-    if (state.status === 'past' && state.selectedAction) {
-      // Call onActionSelect with isViewOnly = true to just view the range
-      onActionSelect(state.position, state.selectedAction, state.selectedAmount, state.index, state.status, true);
+    if (state.status === 'past') {
+      // For past actions, we want to view the range at that decision point
+      console.log(`Past action click: using index=${state.index}`);
+      onPositionClick(state.position, state.index, false);
     } else if (state.status === 'current') {
       // Clicking on the current node should select it to view its range
       // Pass a special flag to indicate we want to select the current node
@@ -439,24 +523,47 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
           const isFuture = state.status === 'future';
           
           // Check if this card represents the selected node
-          const visibleNodes = sequence.filter(n => n.action !== 'advance');
-          const cardNode = visibleNodes[state.index];
-          const isSelectedNode = selectedNode && cardNode && cardNode.id === selectedNode.id;
+          const actualNode = (state as any).actualNode; // For past actions only
+          
+          // Determine if this card is selected:
+          // - For past actions: check if actualNode matches selectedNode
+          // - For current: check if selectedNode is the currentNode
+          // - For future: never selected
+          let isSelectedNode = false;
+          
+          if (state.status === 'past' && actualNode && selectedNode) {
+            isSelectedNode = actualNode.id === selectedNode.id;
+            if (isSelectedNode) {
+              console.log(`Past card ${state.index} selected: ${actualNode.id}`);
+            }
+          } else if (state.status === 'current' && selectedNode && currentNode) {
+            isSelectedNode = selectedNode.id === currentNode.id;
+            if (isSelectedNode) {
+              console.log(`Current card selected: ${currentNode.id}`);
+            }
+          }
+          // future nodes are never selected
           
           // Determine background and border colors
           let bgColor = catppuccin.mantle;
           let borderColor = catppuccin.surface1;
+          let boxShadow = '';
           
-          // Only show purple highlight when viewing a PAST node's range
-          // If selected node is the current node, just show blue
-          const showPurpleSelection = isSelectedNode && selectedNode?.id !== currentNode?.id;
+          // Check if this is both current AND selected
+          const isBothCurrentAndSelected = isCurrent && isSelectedNode;
           
-          if (isCurrent) {
-            // Latest decision in the tree - blue highlight
+          if (isBothCurrentAndSelected) {
+            // Cool gradient effect with animated border for current + selected
+            bgColor = `linear-gradient(135deg, ${catppuccin.blue}30 0%, ${catppuccin.mauve}30 50%, ${catppuccin.blue}30 100%)`;
+            borderColor = catppuccin.mauve;
+            // Add a glow effect
+            boxShadow = `0 0 10px ${catppuccin.mauve}50, inset 0 0 10px ${catppuccin.blue}20`;
+          } else if (isCurrent) {
+            // Just current - blue highlight
             bgColor = catppuccin.blue + '20';
             borderColor = catppuccin.blue;
-          } else if (showPurpleSelection) {
-            // Viewing a past node's range - mauve highlight
+          } else if (isSelectedNode) {
+            // Just selected - purple/mauve highlight
             bgColor = catppuccin.mauve + '30';
             borderColor = catppuccin.mauve;
           } else if (isPast && state.selectedAction) {
@@ -476,7 +583,9 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
                 borderRadius: '4px',
                 cursor: 'pointer',
                 opacity: state.status === 'inactive' ? 0.5 : 1,
-                transition: 'all 0.2s'
+                transition: 'all 0.2s',
+                boxShadow: boxShadow || 'none',
+                position: 'relative' as const
               }}
               onClick={(e) => {
                 e.stopPropagation();
@@ -495,7 +604,8 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
                 <span style={{
                   fontSize: '0.7rem',
                   fontWeight: '600',
-                  color: showPurpleSelection ? catppuccin.mauve :
+                  color: isSelectedNode && !isCurrent ? catppuccin.mauve :
+                         isBothCurrentAndSelected ? catppuccin.mauve :
                          isCurrent ? catppuccin.blue : 
                          isPast ? catppuccin.text : 
                          catppuccin.subtext0
@@ -554,7 +664,12 @@ export const ActionSequenceBar: React.FC<ActionSequenceBarProps> = ({
                         borderWidth: isSelected ? '2px' : '1px'
                       }}
                     >
-                      {actionInfo.label}
+                      {formatActionLabel(
+                        actionInfo.action, 
+                        actionInfo.amount, 
+                        (state as any).stateBefore,
+                        actionInfo.label
+                      )}
                     </button>
                   );
                 })}

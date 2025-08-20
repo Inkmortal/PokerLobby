@@ -30,28 +30,33 @@ export interface BettingRoundState {
   raiseCount: number; // Track number of raises/bets this street (0 = no raises yet)
 }
 
-// This is the new, critical structure for our timeline
+// Node represents a DECISION POINT for a specific position
 export interface ActionNode {
-  id: string; // e.g., "root_HJ_open_2.5_BTN_call_2.5"
+  id: string; // Unique identifier
   
-  // The action that LED to this state
-  position: Position;
-  action: ActionType;
-  amount?: number;
-
-  // The complete state of the game BEFORE this action was taken
+  // WHO needs to make a decision at this node
+  position: Position;  // The position that needs to act at this decision point
+  
+  // The game state when this position needs to decide
   stateBefore: BettingRoundState;
-
-  // The actions that WERE available at this decision point
-  availableActions: PlayerAction[];
   
-  // Range data at this node
+  // The STRATEGY for this position at this decision point
+  // This is the range/strategy for the position that needs to act
   ranges: { [position: string]: RangeData };
   
+  // What actions are available at this decision point
+  availableActions: PlayerAction[];
+  
+  // How we got to this node (action taken by PREVIOUS position)
+  // For root node: action = 'start'
+  // For others: the action taken by the parent node's position
+  action: ActionType;      // Action that led here (for display)
+  amount?: number;         // Amount if applicable
+  
   // Board cards for this node (empty = wildcard/any board)
-  // These override the stateBefore.boardCards for range purposes
   boardCards: string[];
   
+  // Tree structure
   children: ActionNode[];
   parent: ActionNode | null;
   depth: number;
