@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(mkdir:*)",
+      "Bash(find:*)",
+      "Bash(rm:*)",
+      "Bash(cp:*)",
+      "mcp__zen__chat",
+      "Bash(curl:*)",
+      "Bash(grep:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:crates.io)",
+      "Bash(mv:*)",
+      "mcp__puppeteer__puppeteer_navigate",
+      "mcp__zen__debug",
+      "mcp__zen__thinkdeep",
+      "Bash(npm run typecheck:*)",
+      "mcp__zen__codereview",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": [],
+    "defaultMode": "acceptEdits"
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "puppeteer",
+    "notion",
+    "zen"
+  ]
+}

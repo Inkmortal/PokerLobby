@@ -30,41 +30,52 @@ export interface BettingRoundState {
   raiseCount: number; // Track number of raises/bets this street (0 = no raises yet)
 }
 
-// Node represents a DECISION POINT for a specific position
-export interface ActionNode {
-  id: string; // Unique identifier
-  
-  // WHO needs to make a decision at this node
-  position: Position;  // The position that needs to act at this decision point
-  
-  // The game state when this position needs to decide
-  stateBefore: BettingRoundState;
-  
-  // The STRATEGY for this position at this decision point
-  // This is the range/strategy for the position that needs to act
-  ranges: { [position: string]: RangeData };
-  
-  // What actions are available at this decision point
-  availableActions: PlayerAction[];
-  
-  // How we got to this node (action taken by PREVIOUS position)
-  // For root node: action = 'start'
-  // For others: the action taken by the parent node's position
-  action: ActionType;      // Action that led here (for display)
-  amount?: number;         // Amount if applicable
-  
-  // Board cards for this node (empty = wildcard/any board)
-  boardCards: string[];
-  
-  // Tree structure
-  children: ActionNode[];
-  parent: ActionNode | null;
-  depth: number;
+
+/**
+ * DecisionNode represents a decision point for a specific position
+ * This is where a player needs to make a strategic decision
+ */
+export interface DecisionNode {
+  id: string;                      // Unique identifier
+  position: Position;               // Who makes the decision HERE
+  gameState: BettingRoundState;    // Game state when decision is made
+  range: RangeData;                // This position's strategy/frequencies
+  edges: ActionEdge[];             // Available actions from here
+  parent: DecisionNode | null;     // Parent decision node
+  depth: number;                   // Depth in tree
+  boardCards: string[];            // Board cards (empty = wildcard)
 }
 
+/**
+ * ActionEdge represents an action taken from a decision point
+ * Links one DecisionNode to the next
+ */
+export interface ActionEdge {
+  action: ActionType;              // The action taken
+  rawAmount?: number;              // Actual BB amount (e.g., 7.5)
+  
+  // Sizing information for flexible display
+  sizeType?: 'multiplier' | 'percentage' | 'fixed';
+  sizeValue?: number;              // 2.5 for "2.5x", 75 for "75%"
+  
+  // Display label (can be dynamic based on UI toggle)
+  label: string;                   // "Raise to 7.5" or "Raise 2.5x"
+  
+  // Navigation
+  toNode?: DecisionNode;           // Where this action leads (optional until created)
+  
+  // Optional strategy info (for future solver integration)
+  frequency?: number;              // How often this action is taken (0-1)
+  ev?: number;                     // Expected value of this action
+}
+
+/**
+ * Game tree using clean architecture
+ */
 export interface GameTree {
-  root: ActionNode;
-  currentNode: ActionNode;
+  root: DecisionNode;
+  currentNode: DecisionNode;       // Current position in tree
+  selectedNode: DecisionNode;      // Node being viewed/edited
   tableConfig: any;
   positions: Position[];
 }

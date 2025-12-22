@@ -1,5 +1,7 @@
 import { Position, RangeData, TableConfig } from '../RangeBuilder';
+import { DecisionNode } from './PokerState';
 
+// Legacy interface - kept for compatibility
 export interface GameState {
   pot: number;
   effectiveStacks: number;
@@ -13,6 +15,7 @@ export interface GameState {
   lastToAct: Position | null; // Track who needs to act last this round
 }
 
+// Legacy interface - kept for compatibility
 export interface GameNode {
   id: string;
   position: Position;
@@ -25,9 +28,11 @@ export interface GameNode {
   depth: number;
 }
 
+// Updated to use DecisionNode
 export interface GameTree {
-  root: GameNode;
-  currentNode: GameNode;
+  root: DecisionNode;
+  currentNode: DecisionNode;
+  selectedNode: DecisionNode;
   tableConfig: TableConfig;
   positions: Position[];
 }

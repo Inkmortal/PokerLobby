@@ -6,9 +6,9 @@ import { PaintToolbar } from './PaintToolbar';
 import { RangeStats } from './RangeStats';
 import { ImportExportModal } from './ImportExportModal';
 import { parseGTOWizardFormat, exportToGTOWizard } from './utils/formats/gtoWizard';
-import { GameTree, GameNode } from './types/GameTree';
+import { GameTree } from './types/GameTree';
 import { PokerGameEngine } from './engine/PokerGameEngine';
-import { ActionNode, Position as PokerPosition, ActionType, BettingRoundState } from './types/PokerState';
+import { DecisionNode, ActionEdge, ActionType } from './types/PokerState';
 
 export type Position = 'UTG' | 'UTG+1' | 'HJ' | 'LJ' | 'CO' | 'BTN' | 'SB' | 'BB';
 export type GameType = 'Cash' | 'MTT' | 'Spin & Go' | 'HU' | 'SnG';
@@ -26,14 +26,6 @@ export interface RangeData {
 
 // Re-export TableConfig as alias for SolverConfig for compatibility
 export type TableConfig = SolverConfig;
-
-// Legacy ActionNode for ActionSequenceBar compatibility
-export interface ActionNode {
-  position: Position;
-  action: string;
-  amount?: number;
-  range?: RangeData;
-}
 
 interface RangeBuilderProps {
   onSave?: (range: SavedRange) => void;
@@ -142,16 +134,14 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
 
   // Game tree and engine
   const [gameEngine, setGameEngine] = useState(() => new PokerGameEngine(getPositions(), tableConfig));
-  const [gameTree, setGameTree] = useState<{
-    root: ActionNode;
-    currentNode: ActionNode;
-    selectedNode: ActionNode; // Node whose range is being viewed/edited
-  }>(() => {
+  const [gameTree, setGameTree] = useState<GameTree>(() => {
     const root = gameEngine.createRootNode();
     return {
       root,
       currentNode: root,
-      selectedNode: root
+      selectedNode: root,
+      tableConfig,
+      positions: getPositions()
     };
   });
   
@@ -171,7 +161,9 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
     setGameTree({
       root: rootNode,
       currentNode: rootNode,
-      selectedNode: rootNode
+      selectedNode: rootNode,
+      tableConfig,
+      positions: newPositions
     });
     
     // Clear ranges since the tree structure changed
@@ -210,292 +202,146 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
 
   const percentages = calculateActionPercentages();
 
-  const handleActionSelect = (position: Position, action: string, amount?: number, cardIndex?: number, status?: string, isViewOnly?: boolean) => {
-    console.log(`handleActionSelect called: ${position} ${action} ${amount || ''} index=${cardIndex} status=${status} viewOnly=${isViewOnly}`);
-    
-    const positions = getPositions();
-    const currentPath = getActionSequenceFromPath();
-    const posIndex = positions.indexOf(position);
-    
-    // Check if we're trying to view or edit a past action
-    if (status === 'past' && cardIndex !== undefined) {
-      // Filter out advance nodes to match the card indexing from ActionSequenceBar
-      const visibleActions = currentPath.filter(n => n.action !== 'advance');
+
+  const handleActionSelect = (position: Position, action: string, amount?: number, nodeIndex?: number, status?: string, isViewOnly?: boolean) => {
+    // View-only mode - just load the range
+    if (isViewOnly) {
+      const currentPath = getActionSequenceFromPath();
+      const visibleActions = currentPath.filter(item => !item.edge || item.edge.action !== 'advance');
       
-      if (cardIndex < visibleActions.length) {
-        const clickedNode = visibleActions[cardIndex];
-        
-        // If this is just a view action (clicking to see the range), don't modify the tree
-        if (isViewOnly || (clickedNode.action === action && clickedNode.amount === amount)) {
-          console.log(`Viewing range for node at index ${cardIndex}: ${clickedNode.position}:${clickedNode.action}`);
-          
-          // Update selectedNode without changing currentNode
-          setGameTree(prev => ({
-            ...prev,
-            selectedNode: clickedNode
-          }));
-          
-          // When clicking an action card, we want to see the range of the position that TOOK that action
-          // That range is stored at the PARENT node (where they were deciding)
-          if (clickedNode.parent && clickedNode.position === position) {
-            // Load the range from parent node for this position
-            console.log(`Loading ${position}'s range from parent node`);
-            setRangeData(clickedNode.parent.ranges[position] || {});
-          } else {
-            // For other cases, load the range for who needs to act at this node
-            const playersToAct = gameEngine.getPlayersStillToAct(clickedNode.stateBefore);
-            const actingPosition = playersToAct[0] || clickedNode.position;
-            setRangeData(clickedNode.ranges[actingPosition] || {});
-          }
-          return;
-        }
-        
-        // Otherwise, this is an actual edit that will modify the tree
-        console.log(`Editing past action at card index ${cardIndex} for ${position}`);
-        console.log('Current path:', currentPath.map(n => `${n.position}:${n.action}`));
-        console.log('Visible actions:', visibleActions.map(n => `${n.position}:${n.action}`));
-        
-        // Find the actual node we want to edit
-        const nodeToEdit = clickedNode;
-        console.log(`Node to edit: ${nodeToEdit.position}:${nodeToEdit.action}`);
-        
-        // Navigate back to the parent of this specific action
-        let targetNode = gameTree.root;
-        
-        // Replay ALL actions (including advances) up to but not including the one we're editing
-        for (let i = 0; i < currentPath.length; i++) {
-          const step = currentPath[i];
-          
-          // Stop when we reach the node we want to edit
-          if (step === nodeToEdit) {
-            break;
-          }
-          
-          const child = targetNode.children.find(
-            c => c.position === step.position && c.action === step.action && c.amount === step.amount
-          );
-          if (child) {
-            targetNode = child;
-          }
-        }
-        
-        // Now create or find the new action from this point
-        let newBranch = targetNode.children.find(
-          child => child.position === position && child.action === action && child.amount === amount
-        );
-        
-        if (!newBranch) {
-          // Create node for NEXT position to act after this action
-          newBranch = gameEngine.createChildNode(targetNode, action as ActionType, amount);
-        }
-        
-        console.log(`Creating new branch: ${newBranch.id}`);
-        
-        // Check if this new action closes the betting round
-        const stateAfterNewAction = gameEngine.applyAction(
-          newBranch.stateBefore,
-          newBranch.position,
-          newBranch.action as ActionType,
-          newBranch.amount
-        );
-        
-        if (gameEngine.isBettingRoundOver(stateAfterNewAction) && stateAfterNewAction.street !== 'river') {
-          console.log(`New action closes betting round on ${stateAfterNewAction.street}, creating street advancement`);
-          
-          // Advance to next street
-          const nextStreetState = gameEngine.advanceToNextStreet(stateAfterNewAction);
-          
-          // Create a new node for the street transition
-          const streetNode = gameEngine.createChildNode(
-            newBranch,
-            'advance' as ActionType,
-            undefined
-          );
-          
-          // Override the state with the next street state
-          streetNode.stateBefore = nextStreetState;
-          
-          // Set both current and selected node to the street advancement node
-          setGameTree(prev => ({
-            ...prev,
-            currentNode: streetNode,
-            selectedNode: streetNode
-          }));
-          
-          // Load range for the first position to act on the new street
-          const firstToAct = gameEngine.getPlayersStillToAct(streetNode.stateBefore)[0];
-          setRangeData(streetNode.ranges[firstToAct] || {});
-        } else {
-          // Set both current and selected node to the new branch
-          setGameTree(prev => ({
-            ...prev,
-            currentNode: newBranch,
-            selectedNode: newBranch
-          }));
-          
-          // Load the range for whoever needs to act at this new branch node
-          const actorsAtBranch = gameEngine.getPlayersStillToAct(newBranch.stateBefore);
-          if (actorsAtBranch.length > 0) {
-            setRangeData(newBranch.ranges[actorsAtBranch[0]] || {});
-          } else {
-            // If no one left to act, keep showing the position that needs to act
-            setRangeData(newBranch.ranges[position] || {});
-          }
-        }
+      if (nodeIndex !== undefined && nodeIndex < visibleActions.length) {
+        const clickedNode = visibleActions[nodeIndex].node;
+        setGameTree(prev => ({
+          ...prev,
+          selectedNode: clickedNode
+        }));
+        setRangeData(clickedNode.range || {});
       }
       return;
     }
     
-    // Not editing - we're adding a new action
-    // Get players still to act from the game engine
+    // SIMPLE APPROACH: Always build the exact path we want
     
-    // Check if we're at the start of a new street (last node was 'advance')
-    const isNewStreet = currentPath.length > 0 && currentPath[currentPath.length - 1].action === 'advance';
+    // Step 1: Determine what path we want to build
+    const currentPath = getActionSequenceFromPath();
+    const desiredPath: Array<{position: Position, action: string, amount?: number}> = [];
     
-    // Find last actor, but only from the current betting round
-    let lastActor: Position | undefined = undefined;
-    if (!isNewStreet) {
-      // Find the last non-advance action on the current street
-      for (let i = currentPath.length - 1; i >= 0; i--) {
-        const node = currentPath[i];
-        if (node.action !== 'advance' && node.action !== 'start') {
-          // Make sure this action is from the current street
-          if (node.stateBefore.street === currentBettingState.street) {
-            lastActor = node.position;
-            break;
-          }
+    // Build desired path based on what was clicked
+    if (status === 'past') {
+      // Changing a past action - rebuild up to that point with the new action
+      const visibleActions = currentPath.filter(item => !item.edge || item.edge.action !== 'advance');
+      
+      // Copy all actions before the clicked one
+      for (let i = 0; i < nodeIndex! && i < visibleActions.length; i++) {
+        const item = visibleActions[i];
+        if (item.edge && item.edge.action !== 'advance') {
+          // CRITICAL: item.node.position is who TOOK this action (made the decision at this node)
+          desiredPath.push({
+            position: item.node.position,
+            action: item.edge.action,
+            amount: item.edge.rawAmount
+          });
         }
       }
-    }
-    
-    const pendingPlayers = gameEngine.getPlayersStillToAct(currentBettingState, lastActor);
-    
-    console.log(`Current street: ${currentBettingState.street}`);
-    console.log(`Is new street: ${isNewStreet}`);
-    console.log(`Last actor: ${lastActor}`);
-    console.log(`Pending players: ${pendingPlayers.join(', ')}`);
-    console.log(`Clicked position: ${position}`);
-    
-    // Find positions that need to be filled before the clicked position
-    const positionsToFill: Position[] = [];
-    const clickedIndex = pendingPlayers.indexOf(position);
-    if (clickedIndex > 0) {
-      for (let i = 0; i < clickedIndex; i++) {
-        positionsToFill.push(pendingPlayers[i]);
-      }
-    }
-    
-    console.log(`Positions to fill: ${positionsToFill.join(', ')}`);
-    
-    // Start from current node
-    let currentNode = gameTree.currentNode;
-    
-    // Fill gaps with smart check/fold defaults
-    for (const gapPosition of positionsToFill) {
-      // Get the current state after the last action
-      const stateAfterLast = currentNode.action === 'start' ? 
-        currentNode.stateBefore : 
-        gameEngine.applyAction(currentNode.stateBefore, currentNode.position as Position, currentNode.action as ActionType, currentNode.amount);
       
-      // Get available actions for this position
-      const availableActions = gameEngine.getAvailableActions(stateAfterLast, gapPosition);
+      // Add the new action at the clicked position
+      desiredPath.push({ position, action, amount });
       
-      // Choose smart default: check if available, otherwise fold
-      const hasCheck = availableActions.some(a => a.action === 'check');
-      const defaultAction = hasCheck ? 'check' : 'fold';
-      
-      console.log(`Auto-${defaultAction}ing ${gapPosition}`);
-      
-      // Check if this default node already exists
-      let defaultNode = currentNode.children.find(
-        child => child.action === defaultAction
-      );
-      
-      if (!defaultNode) {
-        defaultNode = gameEngine.createChildNode(currentNode, defaultAction as ActionType);
-      }
-      
-      currentNode = defaultNode;
-    }
-    
-    // Now add the actual clicked action
-    // Find child node created by this action
-    let targetNode = currentNode.children.find(
-      child => child.action === action && child.amount === amount
-    );
-    
-    if (!targetNode) {
-      // Create node for NEXT position to act after this action
-      targetNode = gameEngine.createChildNode(currentNode, action as ActionType, amount);
-    }
-    
-    console.log(`Setting current node to: ${targetNode.id}`);
-    
-    // Check if betting round is complete after this action
-    const stateAfterAction = gameEngine.applyAction(
-      targetNode.stateBefore,
-      targetNode.position,
-      targetNode.action as ActionType,
-      targetNode.amount
-    );
-    
-    if (gameEngine.isBettingRoundOver(stateAfterAction) && stateAfterAction.street !== 'river') {
-      console.log(`Betting round complete on ${stateAfterAction.street}, advancing to next street`);
-      
-      // Advance to next street
-      const nextStreetState = gameEngine.advanceToNextStreet(stateAfterAction);
-      
-      // Create a new node for the street transition
-      // This node represents the start of the new street with wildcard board
-      const streetNode = gameEngine.createChildNode(
-        targetNode,
-        'advance' as ActionType, // Special action type for street transitions
-        undefined
-      );
-      
-      // Override the state with the next street state
-      streetNode.stateBefore = nextStreetState;
-      
-      // Update tree to the new street node
-      // When advancing streets, the new node is also the selected node
-      setGameTree(prev => ({
-        ...prev,
-        currentNode: streetNode,
-        selectedNode: streetNode
-      }));
-      
-      // Load range for the first position to act on the new street
-      const firstToAct = gameEngine.getPlayersStillToAct(streetNode.stateBefore)[0];
-      setRangeData(streetNode.ranges[firstToAct] || {});
     } else {
-      // Update tree - the action node represents the STATE AFTER the action
-      // Current node = where we are in the tree (after this action)
-      // Selected node = what we're viewing (also this node initially)
-      setGameTree(prev => ({
-        ...prev,
-        currentNode: targetNode,
-        selectedNode: targetNode
-      }));
+      // Current or future - build from existing path
       
-      // The targetNode represents the game state AFTER the action was taken
-      // We need to load the range for whoever needs to act at this new state
-      const nextToAct = gameEngine.getPlayersStillToAct(stateAfterAction, position);
-      console.log(`After ${position} ${action}, next to act: ${nextToAct.join(', ')}`);
+      // Copy all existing actions
+      // CRITICAL FIX: The position that took an action is the position AT the node where the edge originates
+      // item.node is where the decision was made, item.edge is the action taken FROM that node
+      for (const item of currentPath) {
+        if (item.edge && item.edge.action !== 'advance') {
+          // item.node.position is who TOOK this action (made the decision at this node)
+          desiredPath.push({
+            position: item.node.position,
+            action: item.edge.action,
+            amount: item.edge.rawAmount
+          });
+        }
+      }
       
-      if (nextToAct.length > 0) {
-        // Load range for whoever needs to act at this decision point
-        console.log(`Loading range for ${nextToAct[0]} at node ${targetNode.id}`);
-        setRangeData(targetNode.ranges[nextToAct[0]] || {});
+      // If future, auto-fill positions between current and target
+      if (status === 'future') {
+        let simulatedState = gameTree.currentNode.gameState;
+        let lastPos = gameTree.currentNode.position;
+        
+        // Keep adding default actions until we reach target position
+        while (lastPos !== position) {
+          const nextToAct = gameEngine.getPlayersStillToAct(simulatedState, lastPos);
+          if (nextToAct.length === 0) break;
+          
+          const nextPos = nextToAct[0];
+          if (nextPos === position) break;
+          
+          // Add default action for this position
+          const actions = gameEngine.getAvailableActions(simulatedState, nextPos);
+          const defaultAction = actions.find(a => a.action === 'check') || actions.find(a => a.action === 'fold');
+          if (!defaultAction) break;
+          
+          desiredPath.push({
+            position: nextPos,
+            action: defaultAction.action,
+            amount: defaultAction.amount
+          });
+          
+          // Simulate the action
+          simulatedState = gameEngine.applyAction(simulatedState, nextPos, defaultAction.action as ActionType);
+          lastPos = nextPos;
+        }
+      }
+      
+      // Add the clicked action
+      desiredPath.push({ position, action, amount });
+    }
+    
+    // Step 2: Build the tree following the desired path
+    let currentNode = gameTree.root;
+    
+    for (const step of desiredPath) {
+      // Verify we're at the right position
+      if (currentNode.position !== step.position) {
+        console.error(`Path error: at ${currentNode.position}, expected ${step.position}`);
+        break;
+      }
+      
+      // Find or create the edge
+      let edge = currentNode.edges.find(e => 
+        e.action === step.action && 
+        (step.amount === undefined || e.rawAmount === step.amount)
+      );
+      
+      if (edge?.toNode) {
+        currentNode = edge.toNode;
       } else {
-        // If no one left to act, keep showing the last actor's range
-        setRangeData(targetNode.ranges[position] || {});
+        currentNode = gameEngine.createChildNode(currentNode, step.action as ActionType, step.amount);
       }
     }
+    
+    // Step 3: Check if betting round is complete
+    if (gameEngine.isBettingRoundOver(currentNode.gameState) && currentNode.gameState.street !== 'river') {
+      const streetNode = gameEngine.createChildNode(currentNode, 'advance' as ActionType);
+      const nextStreetState = gameEngine.advanceToNextStreet(currentNode.gameState);
+      streetNode.gameState = nextStreetState;
+      currentNode = streetNode;
+    }
+    
+    // Step 4: Update tree state
+    setGameTree({
+      root: gameTree.root,
+      currentNode: currentNode,
+      selectedNode: currentNode,
+      tableConfig: gameTree.tableConfig,
+      positions: gameTree.positions
+    });
+    
+    setRangeData(currentNode.range || {});
   };
 
-  const handleNodeSelect = (targetNode: ActionNode) => {
-    // This is called when clicking on a node to view its range
-    console.log(`handleNodeSelect called for node: ${targetNode.id}, position: ${targetNode.position}, action: ${targetNode.action}`);
+  const handleNodeSelect = (targetNode: DecisionNode) => {
     
     // Update selected node for UI highlighting
     setGameTree(prev => ({
@@ -504,23 +350,20 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
     }));
     
     // Load the range for the position at this decision node
-    console.log(`Loading range for ${targetNode.position} from node ${targetNode.id}`);
-    setRangeData(targetNode.ranges[targetNode.position] || {});
+    setRangeData(targetNode.range || {});
   };
 
   // Update selected node's range when range data changes
   useEffect(() => {
     if (gameTree.selectedNode) {
-      // SIMPLE: Save range for the node's position
-      const position = gameTree.selectedNode.position;
+      // Update the range
+      gameTree.selectedNode.range = rangeData;
       
-      console.log(`Saving range for ${position} at node ${gameTree.selectedNode.id}`);
-      const updatedRanges = {
-        ...gameTree.selectedNode.ranges,
-        [position]: rangeData
-      };
-      
-      gameTree.selectedNode.ranges = updatedRanges;
+      // Force a re-render by updating the gameTree state
+      setGameTree(prev => ({
+        ...prev,
+        lastUpdate: Date.now()
+      } as any));
     }
   }, [rangeData]);
 
@@ -531,22 +374,34 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
   };
 
   // Convert current tree path to action sequence for display
-  const getActionSequenceFromPath = (): ActionNode[] => {
-    const sequence: ActionNode[] = [];
+  // Returns array of {node, edge} pairs for the ActionSequenceBar
+  const getActionSequenceFromPath = (): Array<{ node: DecisionNode; edge?: ActionEdge }> => {
+    const sequence: Array<{ node: DecisionNode; edge?: ActionEdge }> = [];
     let current = gameTree.currentNode;
     
     // Walk back to root to build the path
-    const path: ActionNode[] = [];
-    while (current && current.parent) {
-      path.unshift(current);
-      current = current.parent;
+    const path: DecisionNode[] = [];
+    let node: DecisionNode | null = current;
+    while (node) {
+      path.unshift(node);
+      node = node.parent;
     }
     
-    // Filter out the root node (which has action 'start')
-    const result = path.filter(node => node.action !== 'start');
+    // Build sequence of decision points and the edges taken from them
+    for (let i = 0; i < path.length; i++) {
+      const node = path[i];
+      let edge: ActionEdge | undefined;
+      
+      // Find the edge that was taken from this node (if any)
+      if (i < path.length - 1) {
+        const nextNode = path[i + 1];
+        edge = node.edges.find(e => e.toNode === nextNode);
+      }
+      
+      sequence.push({ node, edge });
+    }
     
-    console.log(`getActionSequenceFromPath returning ${result.length} actions:`, result.map(n => `${n.position}:${n.action}`));
-    return result;
+    return sequence;
   };
 
   const handleSave = () => {
@@ -554,7 +409,7 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
     const savedRange: SavedRange = {
       id: `range_${Date.now()}`,
       name: pathSequence.length > 0 
-        ? `${pathSequence.map(n => `${n.position} ${n.action}`).join(' → ')}`
+        ? `${pathSequence.map(item => item.edge ? `${item.node.position} ${item.edge.action}` : 'root').join(' → ')}`
         : 'Empty Range',
       gameTree,
       tableConfig,
@@ -572,7 +427,7 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
     const savedRange: SavedRange = {
       id: `range_${Date.now()}`,
       name: pathSequence.length > 0 
-        ? `${pathSequence.map(n => `${n.position} ${n.action}`).join(' → ')}`
+        ? `${pathSequence.map(item => item.edge ? `${item.node.position} ${item.edge.action}` : 'root').join(' → ')}`
         : 'Empty Range',
       gameTree,
       tableConfig,
@@ -586,18 +441,7 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
   };
 
   // Calculate current betting state for display
-  const currentBettingState = (() => {
-    const currentNode = gameTree.currentNode;
-    if (currentNode.action === 'start') {
-      return currentNode.stateBefore;
-    }
-    return gameEngine.applyAction(
-      currentNode.stateBefore,
-      currentNode.position,
-      currentNode.action as ActionType,
-      currentNode.amount
-    );
-  })();
+  const currentBettingState = gameTree.currentNode.gameState;
 
   return (
     <div style={{
@@ -738,24 +582,24 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
         currentNode={gameTree.currentNode}
         showBBAmounts={showBBAmounts}
         onActionSelect={handleActionSelect}
-        onPositionClick={(position: Position, cardIndex?: number, isCurrentNode?: boolean) => {
-          console.log(`onPositionClick: position=${position}, cardIndex=${cardIndex}, isCurrentNode=${isCurrentNode}`);
+        onPositionClick={(position: Position, nodeIndex?: number, isCurrentNode?: boolean) => {
+          console.log(`onPositionClick: position=${position}, nodeIndex=${nodeIndex}, isCurrentNode=${isCurrentNode}`);
           
           if (isCurrentNode) {
             // Clicking on the current (blue) node
             console.log(`Selecting current node`);
             handleNodeSelect(gameTree.currentNode);
-          } else if (cardIndex !== undefined) {
+          } else if (nodeIndex !== undefined) {
             // Clicking on a past action card
             const pathSequence = getActionSequenceFromPath();
             // Filter out advance nodes to match ActionSequenceBar's indexing
-            const visibleActions = pathSequence.filter(n => n.action !== 'advance' && n.action !== 'start');
-            if (cardIndex < visibleActions.length) {
-              // Select the PARENT node where the decision was made
-              const actionNode = visibleActions[cardIndex];
-              const decisionNode = actionNode.parent;
+            const visibleActions = pathSequence.filter(item => item.edge && item.edge.action !== 'advance');
+            if (nodeIndex < visibleActions.length) {
+              // Select the node where the decision was made
+              const item = visibleActions[nodeIndex];
+              const decisionNode = item.node;
               if (decisionNode) {
-                console.log(`Selecting decision node at index ${cardIndex}: ${decisionNode.id}`);
+                console.log(`Selecting decision node at index ${nodeIndex}: ${decisionNode.id}`);
                 handleNodeSelect(decisionNode);
               }
             }
@@ -763,16 +607,18 @@ export const RangeBuilder: React.FC<RangeBuilderProps> = ({ onSave, onUseInSolve
         }}
         onBoardSelect={(street: 'flop' | 'turn' | 'river', cards: string[]) => {
           // Find the advance node for this specific street
-          const findStreetNode = (node: ActionNode, targetStreet: string): ActionNode | null => {
-            // Check if this is the advance node for the target street
-            if (node.action === 'advance' && node.stateBefore.street === targetStreet) {
+          const findStreetNode = (node: DecisionNode, targetStreet: string): DecisionNode | null => {
+            // Check if this node is on the target street
+            if (node.gameState.street === targetStreet) {
               return node;
             }
             
-            // Search children recursively
-            for (const child of node.children) {
-              const found = findStreetNode(child, targetStreet);
-              if (found) return found;
+            // Search through edges to find children
+            for (const edge of node.edges) {
+              if (edge.toNode) {
+                const found = findStreetNode(edge.toNode, targetStreet);
+                if (found) return found;
+              }
             }
             
             return null;

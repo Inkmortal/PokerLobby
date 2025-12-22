@@ -5,7 +5,8 @@ import {
   PlayerAction, 
   PlayerState, 
   BettingRoundState,
-  ActionNode 
+  DecisionNode,
+  ActionEdge
 } from '../types/PokerState';
 import { RangeData } from '../RangeBuilder';
 import { SolverConfig } from '../TableSettings';
@@ -100,6 +101,7 @@ export class PokerGameEngine {
 
   // Get players who still need to act
   public getPlayersStillToAct(state: BettingRoundState, lastActor?: Position): Position[] {
+    console.log(`getPlayersStillToAct called: lastActor=${lastActor}, street=${state.street}, amountToCall=${state.amountToCall}`);
     const pending: Position[] = [];
     
     // Use correct position order based on street
@@ -142,11 +144,17 @@ export class PokerGameEngine {
     const startIndex = positionOrder.indexOf(lastActor);
     
     // Check each position in order after the last actor
-    for (let i = 1; i <= positionOrder.length; i++) {
+    // IMPORTANT: Loop less than length to avoid including lastActor again
+    for (let i = 1; i < positionOrder.length; i++) {
       const pos = positionOrder[(startIndex + i) % positionOrder.length];
       const player = state.players.get(pos);
       
-      // Skip the last aggressor if we've come full circle and they don't need to act again
+      // If we've wrapped around to the lastActor, stop
+      if (pos === lastActor) {
+        break;
+      }
+      
+      // Skip the last aggressor if they don't need to act again
       if (pos === state.lastAggressor && player && player.betInRound >= state.amountToCall) {
         // The aggressor already has the right amount in, action is complete
         break;
@@ -548,70 +556,6 @@ export class PokerGameEngine {
     return newState;
   }
 
-  // Create root node
-  public createRootNode(): ActionNode {
-    const initialState = this.createInitialState();
-    const firstToAct = this.positions.find(p => p !== 'SB' && p !== 'BB') || this.positions[0];
-    
-    // Initialize ranges - each position starts with empty strategy (user will define)
-    const initialRanges: { [position: string]: any } = {};
-    // Only the first position to act needs a range at the root
-    // Other positions will get ranges as the tree develops
-    initialRanges[firstToAct] = {}; // Empty = user needs to define the opening strategy
-    
-    return {
-      id: 'root',
-      position: 'SB' as Position, // Placeholder
-      action: 'start',
-      amount: undefined,
-      stateBefore: initialState,
-      availableActions: this.getAvailableActions(initialState, firstToAct),
-      ranges: initialRanges,
-      boardCards: [], // Empty = wildcard board
-      children: [],
-      parent: null,
-      depth: 0
-    };
-  }
-
-  // Create child node for the NEXT position to act
-  public createChildNode(
-    parent: ActionNode,
-    action: ActionType,  // Action taken by parent.position
-    amount?: number
-  ): ActionNode {
-    // Apply the action taken by parent.position to get the new state
-    const stateAfterAction = parent.action === 'start' ? 
-      parent.stateBefore : 
-      this.applyAction(parent.stateBefore, parent.position, action, amount);
-    
-    // Determine who needs to act next
-    const nextToAct = this.getPlayersStillToAct(stateAfterAction, parent.position);
-    const nextPosition = nextToAct[0] || parent.position; // Fallback if no one left
-    
-    // Deep copy parent ranges to prevent corruption between nodes
-    const childRanges = structuredClone ? structuredClone(parent.ranges) : JSON.parse(JSON.stringify(parent.ranges));
-    
-    // Each node stores independent ranges
-    // The child node will store the strategy for nextPosition
-    
-    const child: ActionNode = {
-      id: `${parent.id}_${action}_${amount || ''}`,
-      position: nextPosition,  // WHO needs to act at this node
-      action,                   // How we got here (action taken by parent.position)
-      amount,
-      stateBefore: stateAfterAction,
-      availableActions: this.getAvailableActions(stateAfterAction, nextPosition),
-      ranges: childRanges,
-      boardCards: action === 'advance' ? [] : [...parent.boardCards],
-      children: [],
-      parent,
-      depth: parent.depth + 1
-    };
-    
-    parent.children.push(child);
-    return child;
-  }
 
   // Advance to next street (call this explicitly when betting round is complete)
   public advanceToNextStreet(state: BettingRoundState): BettingRoundState {
@@ -815,5 +759,134 @@ export class PokerGameEngine {
       }
       return option;
     });
+  }
+
+  /**
+   * Create root DecisionNode
+   */
+  public createRootNode(): DecisionNode {
+    const initialState = this.createInitialState();
+    const firstToAct = this.positions.find(p => p !== 'SB' && p !== 'BB') || this.positions[0];
+    
+    const rootNode: DecisionNode = {
+      id: 'root',
+      position: firstToAct,  // Who needs to decide first
+      gameState: initialState,
+      range: {},  // Empty initial range
+      edges: [],  // Will be populated as actions are taken
+      parent: null,
+      depth: 0,
+      boardCards: []  // Wildcard board
+    };
+    
+    return rootNode;
+  }
+
+  /**
+   * Create ActionEdge with proper sizing information
+   */
+  private createActionEdge(
+    fromNode: DecisionNode,
+    action: ActionType,
+    amount?: number,
+    toNode?: DecisionNode
+  ): ActionEdge {
+    const state = fromNode.gameState;
+    
+    // Determine sizing type and value
+    let sizeType: 'multiplier' | 'percentage' | 'fixed' | undefined;
+    let sizeValue: number | undefined;
+    let label: string;
+    
+    if (!amount) {
+      // Simple actions without amounts
+      label = action.charAt(0).toUpperCase() + action.slice(1);
+    } else {
+      // Determine sizing type based on action and game state
+      if (action === 'raise' && state.amountToCall > 0) {
+        // Raise: store as multiplier
+        const multiplier = amount / state.amountToCall;
+        sizeType = 'multiplier';
+        sizeValue = Math.round(multiplier * 10) / 10;
+        label = `Raise to ${this.formatBB(amount)}`;
+      } else if (action === 'bet' && state.pot > 0) {
+        // Bet: store as percentage
+        const percentage = (amount / state.pot) * 100;
+        sizeType = 'percentage';
+        sizeValue = Math.round(percentage);
+        label = `Bet ${this.formatBB(amount)}`;
+      } else if (action === 'open') {
+        // Open: store as fixed BB amount
+        sizeType = 'fixed';
+        sizeValue = amount;
+        label = `Open ${this.formatBB(amount)}`;
+      } else {
+        // Default: fixed amount
+        sizeType = 'fixed';
+        sizeValue = amount;
+        label = `${action} ${this.formatBB(amount)}`;
+      }
+    }
+    
+    const edge: ActionEdge = {
+      action,
+      rawAmount: amount,
+      sizeType,
+      sizeValue,
+      label,
+      toNode  // Optional - will be set by caller if provided
+    };
+    
+    return edge;
+  }
+
+  /**
+   * Create child DecisionNode from parent with action
+   */
+  public createChildNode(
+    parent: DecisionNode,
+    action: ActionType,
+    amount?: number
+  ): DecisionNode {
+    // Apply the action to get new state
+    const newState = this.applyAction(parent.gameState, parent.position, action, amount);
+    
+    // Determine who acts next
+    const nextToAct = this.getPlayersStillToAct(newState, parent.position);
+    const nextPosition = nextToAct[0] || parent.position;
+    
+    // Create the new decision node
+    const childNode: DecisionNode = {
+      id: `${parent.id}_${action}_${amount || ''}`,
+      position: nextPosition,  // Who needs to decide at this new node
+      gameState: newState,
+      range: {},  // Empty range for new node
+      edges: [],
+      parent,
+      depth: parent.depth + 1,
+      boardCards: action === 'advance' ? [] : [...parent.boardCards]
+    };
+    
+    // Create the edge connecting parent to child
+    const edge = this.createActionEdge(parent, action, amount, childNode);
+    parent.edges.push(edge);
+    
+    return childNode;
+  }
+
+  /**
+   * Get available actions as edges (with sizing info)
+   */
+  public getAvailableEdges(node: DecisionNode): ActionEdge[] {
+    const actions = this.getAvailableActions(node.gameState, node.position);
+    const edges: ActionEdge[] = [];
+    
+    actions.forEach(action => {
+      // Create a placeholder edge (toNode will be created when action is taken)
+      const edge = this.createActionEdge(node, action.action as ActionType, action.amount);
+      edges.push(edge);
+    });
+    
+    return edges;
   }
 }
