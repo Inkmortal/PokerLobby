@@ -1,321 +1,343 @@
 # Tech Context
 
-## Core Technology Stack
+## Core Technology Stack (Updated 2025-12-23)
 
-### Frontend Framework
-**React 18+ with TypeScript**
-- Chosen for component reusability
-- Strong typing for complex poker logic
-- Excellent ecosystem for UI components
-- Best AI coding support
+### Frontend Layer (Keeping)
+| Technology | Version | Purpose |
+|------------|---------|---------|
+| React | 18+ | UI components |
+| TypeScript | 5.x | Type safety |
+| Electron | 28+ | Desktop app |
+| Vite | 5.x | Build tool |
+| Zustand | 4.x | State management |
 
-### Desktop Framework
-**Electron**
-- Mature and stable
-- Good WebAssembly support
-- Extensive documentation
-- Easy distribution
+### Backend Layer (NEW - Python)
+| Technology | Version | Purpose |
+|------------|---------|---------|
+| Python | 3.10+ | Backend runtime |
+| RLCard | latest | Game engine + CFR base |
+| phevaluator | 0.5+ | Hand evaluation |
+| NumPy | latest | Numerical operations |
+| FastAPI | latest | HTTP API (optional) |
 
-### Language
-**TypeScript**
-- Type safety for complex domain
-- Better IDE support
-- Reduces runtime errors
-- Optimal for AI assistance
+### Libraries Being Added
 
-### Solver Technology
-**WebAssembly (WASM)**
-- Near-native performance
-- Runs in browser/Electron
-- Sandboxed security
-- Cross-platform
+#### RLCard (Game Engine + CFR)
+- **Repository**: https://github.com/datamllab/rlcard
+- **Purpose**: Provides NLHE environment and vanilla CFR implementation
+- **Why chosen**:
+  - Full No-Limit Texas Hold'em support
+  - Built-in CFR algorithm we can modify
+  - Active development, good documentation
+  - Extensible agent architecture
 
-### State Management
-**Zustand or Redux Toolkit**
-- Zustand: Simpler, less boilerplate
-- Redux Toolkit: More features, DevTools
-- Decision pending based on complexity
-
-### Database
-**SQLite**
-- Local-first approach
-- No server required
-- Fast queries
-- Portable data
-
-### Styling
-**Options under consideration:**
-- Tailwind CSS (utility-first)
-- CSS Modules (scoped styles)
-- Styled Components (CSS-in-JS)
-- Emotion (CSS-in-JS alternative)
-
-## Development Tools
-
-### Build Tools
-```json
-{
-  "build": {
-    "webpack": "5.x",
-    "vite": "alternative option",
-    "esbuild": "for fast builds"
-  }
-}
+```bash
+pip install rlcard
 ```
 
-### Package Manager
-**npm or pnpm**
-- npm: Standard, widely supported
-- pnpm: Faster, disk efficient
+#### phevaluator (Hand Evaluation)
+- **Repository**: https://github.com/HenryRLee/PokerHandEvaluator
+- **Purpose**: Ultra-fast hand strength evaluation
+- **Why chosen**:
+  - ~100KB lookup tables
+  - Nanosecond evaluation time
+  - Python bindings available
+  - Supports 5-7 card hands + Omaha
 
-### Version Control
-**Git with GitHub**
-- Standard branching strategy
-- PR-based workflow
-- CI/CD via GitHub Actions
-
-### Code Quality
-```json
-{
-  "linting": "ESLint",
-  "formatting": "Prettier",
-  "typeChecking": "TypeScript strict mode",
-  "testing": {
-    "unit": "Jest or Vitest",
-    "component": "React Testing Library",
-    "e2e": "Playwright or Cypress"
-  }
-}
+```bash
+pip install phevaluator
 ```
 
-## Dependencies
+#### poker-hand-clustering (Card Abstraction)
+- **Repository**: https://github.com/sammiya/poker-hand-clustering
+- **Purpose**: K-Means clustering for EHS-based hand bucketing
+- **Why chosen**:
+  - Implements EMD (Earth Mover's Distance)
+  - Based on academic research (CMU/Alberta)
+  - Ready-to-use abstraction
 
-### Core Dependencies
-```json
-{
-  "react": "^18.0.0",
-  "react-dom": "^18.0.0",
-  "electron": "^27.0.0",
-  "typescript": "^5.0.0",
-  "sqlite3": "^5.0.0",
-  "better-sqlite3": "alternative"
-}
-```
+### Libraries for Future Phases
 
-### UI Libraries (Potential)
-```json
-{
-  "ui": {
-    "charts": "recharts or victory",
-    "tables": "react-table or ag-grid",
-    "animations": "framer-motion",
-    "icons": "react-icons",
-    "tooltips": "react-tooltip"
-  }
-}
-```
+#### Pgx (GPU Game Environments)
+- **Repository**: https://github.com/sotetsuk/pgx
+- **Purpose**: JAX-based game simulators for GPU acceleration
+- **When**: Phase 5 (GPU acceleration)
+- **Note**: Currently supports "two-suit, limited deck poker"
 
-### Solver Dependencies
-```json
-{
-  "wasm": {
-    "emscripten": "for C++ to WASM",
-    "wasm-bindgen": "alternative for Rust",
-    "comlink": "for worker communication"
-  }
-}
-```
+#### cfrx (JAX CFR)
+- **Repository**: https://github.com/Egiob/cfrx
+- **Purpose**: Hardware-accelerated CFR in JAX
+- **When**: Phase 5 (GPU acceleration)
+- **Note**: Currently only Kuhn/Leduc poker
+
+### Deprecated/Removed
+
+#### Rust postflop-solver
+- **Status**: Deprecated as primary solver
+- **Reason**:
+  - Postflop only, no preflop
+  - 2-player focused
+  - No exploitative profile support (only node-locking)
+  - Development suspended by author
+- **Keep for**: Reference, potential pure GTO analysis
 
 ## Development Environment
 
 ### Required Software
-- Node.js 18+ LTS
-- npm/pnpm
-- Git
-- VS Code (recommended)
-- C++ compiler (for solver)
-- Emscripten SDK
+```bash
+# Node.js (frontend)
+node >= 18.0.0
+npm >= 9.0.0
 
-### VS Code Extensions
-- ESLint
-- Prettier
-- TypeScript Vue Plugin
-- C/C++ Extension
-- WebAssembly Support
+# Python (backend)
+python >= 3.10
+pip >= 23.0
 
-### Project Structure
+# Optional
+git
+VS Code
+```
+
+### Python Environment Setup
+```bash
+# Create virtual environment
+python -m venv venv
+
+# Activate (Windows)
+.\venv\Scripts\activate
+
+# Activate (Unix)
+source venv/bin/activate
+
+# Install dependencies
+pip install rlcard phevaluator numpy fastapi uvicorn
+```
+
+### Project Structure (Updated)
 ```
 poker-lobby/
 ├── src/
-│   ├── main/           # Electron main process
-│   ├── renderer/       # React app
+│   ├── frontend/           # React + TypeScript (KEEP)
 │   │   ├── components/
-│   │   ├── screens/
-│   │   ├── services/
-│   │   ├── hooks/
-│   │   └── utils/
-│   ├── shared/         # Shared types/constants
-│   └── wasm/          # WASM module
-├── public/            # Static assets
-├── electron/          # Electron configuration
-├── scripts/           # Build scripts
-└── tests/            # Test files
+│   │   ├── pages/
+│   │   └── services/
+│   │
+│   ├── backend/            # NEW: Python backend
+│   │   ├── __init__.py
+│   │   ├── server.py       # FastAPI or JSON-RPC server
+│   │   ├── solver/
+│   │   │   ├── __init__.py
+│   │   │   ├── biased_cfr.py    # Utility-biased CFR
+│   │   │   ├── profiles.py       # Player archetypes
+│   │   │   └── abstraction.py    # Card abstraction
+│   │   ├── engine/
+│   │   │   ├── __init__.py
+│   │   │   └── game.py          # RLCard wrapper
+│   │   └── evaluator/
+│   │       ├── __init__.py
+│   │       └── hands.py         # phevaluator wrapper
+│   │
+│   ├── api/                # TypeScript API layer (KEEP)
+│   │   └── index.ts
+│   │
+│   ├── shared/             # Shared types (KEEP)
+│   │   └── types.ts
+│   │
+│   └── solver/rust/        # DEPRECATED: Keep for reference
+│       └── ...
+│
+├── electron/               # Electron main process (KEEP)
+│   ├── main.js
+│   ├── preload.js
+│   └── pythonBridge.js     # NEW: Python subprocess manager
+│
+├── memory-bank/            # Documentation (KEEP)
+├── public/                 # Static assets (KEEP)
+├── package.json            # Node dependencies
+├── requirements.txt        # NEW: Python dependencies
+└── vite.config.ts
 ```
+
+### requirements.txt (NEW)
+```
+rlcard>=1.0.0
+phevaluator>=0.5.0
+numpy>=1.24.0
+fastapi>=0.100.0
+uvicorn>=0.23.0
+scikit-learn>=1.3.0  # For K-Means clustering
+```
+
+## Communication Architecture
+
+### Option A: Python Subprocess (Recommended for Desktop)
+```
+Electron Main Process
+        │
+        ├── spawn Python subprocess
+        │
+        ▼
+Python Backend (stdin/stdout JSON-RPC)
+        │
+        ├── RLCard game environment
+        ├── Biased CFR solver
+        └── phevaluator
+```
+
+**Pros**: Simple, no network overhead, bundleable
+**Cons**: Need to bundle Python with app
+
+### Option B: FastAPI HTTP Server (Alternative)
+```
+Electron Renderer
+        │
+        ├── HTTP requests
+        │
+        ▼
+FastAPI Server (localhost:8000)
+        │
+        ├── RLCard game environment
+        ├── Biased CFR solver
+        └── phevaluator
+```
+
+**Pros**: Standard REST API, easy debugging
+**Cons**: Network overhead, separate process management
 
 ## Build Configuration
 
-### WebAssembly Build
+### Python Backend Build
 ```bash
-# Compile C++ to WASM
-emcc solver.cpp -o solver.js \
-  -s WASM=1 \
-  -s MODULARIZE=1 \
-  -s EXPORT_ES6=1 \
-  -s ALLOW_MEMORY_GROWTH=1 \
-  -O3
+# Development
+cd src/backend
+python -m uvicorn server:app --reload
+
+# Production (bundle with PyInstaller)
+pyinstaller --onefile server.py
 ```
 
-### Electron Build
+### Electron Build (Updated)
 ```json
 {
   "build": {
     "appId": "com.pokerlobby.app",
     "productName": "PokerLobby",
-    "directories": {
-      "output": "dist"
-    },
+    "extraResources": [
+      {
+        "from": "src/backend/dist",
+        "to": "backend"
+      }
+    ],
     "files": [
       "dist/**/*",
       "electron/**/*"
-    ],
-    "mac": {
-      "category": "public.app-category.games"
-    },
-    "win": {
-      "target": "nsis"
-    },
-    "linux": {
-      "target": "AppImage"
-    }
+    ]
   }
 }
 ```
 
 ## Performance Considerations
 
-### WebAssembly Optimization
-- Compile with -O3 flag
-- Use SIMD instructions where possible
-- Minimize memory allocations
-- Implement worker threads
+### Python Backend Optimization
+- Use NumPy vectorized operations
+- Cache solved game states (LRU cache)
+- Pre-compute card abstraction buckets
+- Lazy evaluation where possible
 
-### React Optimization
-- Code splitting with lazy loading
-- Memoization with useMemo/useCallback
-- Virtual scrolling for large lists
-- Minimize re-renders
+### Card Abstraction Levels
+| Level | Buckets | Use Case | Speed |
+|-------|---------|----------|-------|
+| High | 50,000+ | Analysis | Slow |
+| Standard | 10,000 | Training | Medium |
+| Fast | 1,000 | Real-time | Fast |
 
-### Electron Optimization
-- Preload scripts for security
-- Context isolation
-- Minimize main/renderer communication
-- Efficient IPC usage
+### Memory Management
+- RLCard environments are lightweight
+- phevaluator uses ~100KB lookup tables
+- CFR regret tables scale with game tree size
+- Use 16-bit floats for large games
+
+## Testing Strategy
+
+### Python Backend Tests
+```python
+# tests/test_solver.py
+def test_cfr_convergence():
+    solver = BiasedCFRSolver(biases={})
+    solver.train(iterations=1000)
+    assert solver.exploitability < 0.05
+
+def test_profile_bias():
+    fish = PROFILES['fish']
+    solver = BiasedCFRSolver(biases=fish.biases)
+    strategy = solver.get_strategy(some_state)
+    # Fish should call more than GTO
+    assert strategy['call'] > gto_strategy['call']
+```
+
+### Integration Tests
+```typescript
+// tests/integration/solver.test.ts
+test('Python backend responds to solve request', async () => {
+    const result = await pythonBridge.call('solve', {
+        gameState: mockState,
+        profile: 'fish'
+    });
+    expect(result.strategy).toBeDefined();
+});
+```
+
+## Security Considerations
+
+### Python Backend Security
+- Run as subprocess with limited permissions
+- No network access (subprocess mode)
+- Validate all input from frontend
+- Sanitize game state data
+
+### Electron Security (Unchanged)
+```javascript
+const win = new BrowserWindow({
+    webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        preload: path.join(__dirname, 'preload.js')
+    }
+});
+```
 
 ## Deployment Strategy
 
 ### Desktop Distribution
-- **Windows**: NSIS installer
-- **macOS**: DMG with code signing
-- **Linux**: AppImage/Snap
+1. Build React frontend with Vite
+2. Bundle Python backend with PyInstaller
+3. Package with Electron Builder
+4. Code sign for Windows/macOS
 
-### Auto-Updates
-- electron-updater for patches
-- Differential updates
-- Background downloads
-- Rollback capability
+### Python Bundling Options
+- **PyInstaller**: Single executable, cross-platform
+- **Nuitka**: Compiled Python, faster startup
+- **Embedded Python**: Ship Python runtime with app
 
-### Future Web Deployment
-- Progressive Web App
-- Service workers for offline
-- WebAssembly streaming
-- CDN distribution
+## Migration Path
 
-## Security Considerations
+### Phase 1: Add Python Backend
+1. Create `src/backend/` structure
+2. Install RLCard + phevaluator
+3. Build JSON-RPC server
+4. Create Electron subprocess bridge
 
-### Electron Security
-```javascript
-// Main process
-const win = new BrowserWindow({
-  webPreferences: {
-    contextIsolation: true,
-    preload: path.join(__dirname, 'preload.js'),
-    nodeIntegration: false
-  }
-});
-```
+### Phase 2: Implement Profile System
+1. Define player archetypes
+2. Modify RLCard CFR for bias
+3. Add profile configuration UI
 
-### Content Security Policy
-```html
-<meta http-equiv="Content-Security-Policy" 
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'">
-```
+### Phase 3: Connect Frontend
+1. Update API layer for Python calls
+2. Wire Range Builder to new solver
+3. Add training mode UI
 
-### Data Protection
-- Local storage encryption
-- Secure IPC communication
-- Input sanitization
-- No external API keys
-
-## Testing Strategy
-
-### Unit Tests
-- Pure functions
-- Poker logic
-- Range calculations
-- Import parsers
-
-### Integration Tests
-- Solver integration
-- Database operations
-- State management
-- IPC communication
-
-### E2E Tests
-- Complete workflows
-- Cross-platform testing
-- Performance benchmarks
-- Memory leak detection
-
-## Development Workflow
-
-### Git Flow
-```
-main
-├── develop
-│   ├── feature/solver-ui
-│   ├── feature/training-drills
-│   └── feature/multiplayer
-└── release/v1.0.0
-```
-
-### CI/CD Pipeline
-1. Push to feature branch
-2. Run tests
-3. Build WASM module
-4. Build Electron app
-5. Create artifacts
-6. Deploy to beta channel
-
-## Monitoring and Analytics
-
-### Performance Metrics
-- Solver execution time
-- Memory usage
-- Frame rate
-- Load times
-
-### User Analytics (Privacy-Focused)
-- Feature usage (anonymous)
-- Error tracking
-- Performance metrics
-- Opt-in only
+### Phase 4: Deprecate Rust
+1. Remove Rust solver from build
+2. Keep code for reference
+3. Update documentation

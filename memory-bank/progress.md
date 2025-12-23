@@ -1,136 +1,207 @@
 # Progress
 
 ## Current Status
-**Project Phase**: Range Builder Implementation - Betting Logic Complete
+**Project Phase**: Architecture Pivot - Hybrid Python/TypeScript
 **Date Started**: 2025-08-13
-**Last Updated**: 2025-08-15
+**Last Updated**: 2025-12-23
+
+## Major Architecture Decision (2025-12-23)
+
+### The Pivot
+Transitioning from Rust-only solver to **hybrid Python/TypeScript architecture** to support exploitative training against population-modeled opponents.
+
+### Why
+1. Current Rust solver (postflop-solver) is postflop-only, 2-player focused
+2. No exploitative profile support - only node-locking (creates brittle, robotic play)
+3. Training requires modeling opponent types (fish, nits, whales, LAGs)
+4. GTO vs GTO training is incomplete - real value is learning to exploit
+
+### New Stack
+- **Keep**: React + TypeScript frontend, Electron, existing UI components
+- **Add**: Python backend with RLCard + phevaluator + custom profile system
+- **Deprecate**: Rust postflop-solver (keep for reference)
 
 ## What Works
 
-### Solver Integration (Complete)
-- **COMPLETE postflop-solver Rust code integrated** (2025-08-13)
-- **Native Node.js bindings created** for maximum performance
-- **Electron configured** for desktop deployment
-- **Native solver module COMPILED and TESTED** - Successfully solving poker games
-- **Electron IPC handlers implemented** - Full solver integration with main process
+### Frontend (Complete - Keep As-Is)
+- **Range Builder UI** - Visual 169-combo hand matrix
+- **ActionSequenceBar** - Betting tree visualization
+- **Table Settings** - Game configuration
+- **Paint Tools** - Range frequency adjustment
+- **Game Engine (TypeScript)** - Betting logic, position ordering
 
-### Range Builder (90% Complete)
-- **Action Sequence Timeline** - Visual poker decision tree with custom scrollbar
-- **Dynamic Position Cards** - Shows available actions for each position
-- **Smart Gap-Filling** - Auto check/fold for skipped positions
-- **Multi-Betting Cycles** - Supports unlimited betting rounds
-- **Index-Based Card System** - Proper tracking of multiple actions per position
-- **BB Special Logic** - BB only appears when someone limps/raises
-- **Complete Betting Logic** - All raise levels (2-bet through 6-bet+), proper all-in handling
-- **Paint Tool** - Working range frequency painting
-- **Table Settings UI** - FULLY INTEGRATED with game engine
-- **Solver Thresholds** - SPR-based forceAllInThreshold, addAllInThreshold, mergingThreshold
-- **Position-Specific Settings** - Override sizing per position with inheritance
-- **Raise Counting System** - Accurate tracking of betting levels (raiseCount)
-
-## What's Been Built
-
-### Project Infrastructure
-- Unified project structure (Frontend + API + Electron)
+### Infrastructure (Complete)
+- React + TypeScript + Vite build system
+- Electron desktop app
 - Memory bank documentation system
-- TypeScript build system working
-- Full postflop-solver integration with native bindings
+- Git repository with proper structure
 
-### Range Builder Components
-1. **PokerGameEngine** - Centralized game logic
-   - Complete betting round detection
-   - Proper position ordering (HJ first in preflop)
-   - Stack-aware action generation
-   - NO automatic street advancement (deliberate design)
+### Betting Logic (Complete)
+- Raise counting system (raiseCount field)
+- All betting levels (2-bet through 6-bet+)
+- SPR-based all-in thresholds
+- Position-specific settings overrides
 
-2. **ActionSequenceBar** - Timeline visualization
-   - Index-based cards (not position-based)
-   - Proper past/current/future status tracking
-   - Drag navigation for long sequences
-   - Dynamic height based on available actions
+## What's Being Replaced
 
-3. **Game Tree Structure**
-   - ActionNodes with complete state snapshots
-   - Range storage at each node
-   - Parent-child navigation
-   - Saved available actions (no recalculation)
+### Rust Solver (Deprecated)
+- **Status**: Keep code for reference, not primary engine
+- **Reason**:
+  - Postflop only
+  - No exploitative profiles
+  - Development suspended by author
+  - Node-locking is inferior to utility biasing
 
-## What Doesn't Work Yet
+## Refactoring Roadmap
 
-### Critical Missing Features
-1. ~~**Table Settings Integration**~~ ✅ FIXED - Settings now fully integrated with engine
-2. **Range Persistence** - Ranges don't save between actions or sessions
-3. **Range Initialization Sliders** - Were removed, need to be restored
-4. **Position Selection** - Can't click position to view/edit range without selecting action
-5. **Postflop Continuation** - Stops at preflop, doesn't continue to flop/turn/river
-6. **Board Cards** - No way to select flop/turn/river cards
-7. **Range Library** - No connection between tree and range library system
-8. **Tree Import/Export** - No UI buttons for importing/exporting game trees
+### Phase 1: Python Backend Foundation
+**Goal**: Set up Python backend with basic solver capability
 
-### Known Issues
-- Range data at nodes isn't properly propagated through tree
-- "Save Range" button saves entire tree, not individual ranges
-- Can't manually construct ranges for specific positions/actions
-- Tree represents library of ranges but linkage not implemented
+- [ ] Create `src/backend/` directory structure
+- [ ] Set up Python virtual environment
+- [ ] Install RLCard + phevaluator
+- [ ] Create JSON-RPC or FastAPI server
+- [ ] Build Electron ↔ Python subprocess bridge
+- [ ] Basic game state communication test
 
-## What's Left to Build
+**Deliverable**: Python backend responds to solve requests from Electron
 
-### Immediate Priority (Range Builder Completion)
-- [ ] Integrate table settings with game engine
-- [ ] Restore range initialization sliders
-- [ ] Implement range persistence within session
-- [ ] Add position selection without action requirement
-- [ ] Enable manual range construction for any position/action
-- [ ] Link range tree to library system
-- [ ] Extend simulation beyond preflop to all streets
-- [ ] Add board card selection for postflop
+### Phase 2: Profile System (Core Feature)
+**Goal**: Implement GTO Wizard-style utility biasing
 
-### Solver Integration
-- [ ] Connect ranges to existing solver
-- [ ] Handle missing tree paths
-- [ ] Build solver UI for postflop analysis
-- [ ] Implement range propagation through tree
+- [ ] Define PlayerProfile dataclass
+- [ ] Create predefined archetypes:
+  - Fish (calls too much)
+  - Nit (folds too much)
+  - Whale (never folds)
+  - Calling Station (passive caller)
+  - LAG (loose-aggressive)
+  - Maniac (hyper-aggressive)
+  - TAG (solid regular)
+  - GTO (no bias)
+- [ ] Modify RLCard CFR to accept bias tensors
+- [ ] Implement biased regret update formula
+- [ ] Build profile configuration UI in frontend
+- [ ] Test profile behavior matches expected HUD stats
 
-### Training System
-- [ ] Hand history parser
-- [ ] Population range construction
-- [ ] Drill mode implementation
-- [ ] Progress tracking
+**Deliverable**: Solver produces different strategies based on profile
 
-## Evolution of Decisions
+### Phase 3: Card Abstraction (Speed)
+**Goal**: Enable real-time decisions via hand bucketing
 
-### Range Builder Architecture
-1. **Initial**: Simple action sequence tracking
-2. **Problem**: State retroactively changed when editing
-3. **Solution**: Complete state snapshots at each node
+- [ ] Implement EHS (Expected Hand Strength) calculator
+- [ ] Use phevaluator for equity computation
+- [ ] Build K-Means clustering for hand abstraction
+- [ ] Create bucket precomputation pipeline
+- [ ] Implement configurable granularity levels:
+  - High (50k+ buckets) - Analysis mode
+  - Standard (10k buckets) - Training mode
+  - Fast (1k buckets) - Real-time mode
+- [ ] Connect abstraction to solver
 
-### Timeline Design
-1. **Initial**: Position-based cards
-2. **Problem**: Multiple actions per position caused confusion
-3. **Solution**: Index-based cards with unique IDs
+**Deliverable**: Solver runs fast enough for training sessions
 
-### BB Visibility
-1. **Initial**: BB always visible
-2. **Realization**: BB shouldn't act if everyone folds
-3. **Solution**: BB only appears after someone acts (limps/raises)
+### Phase 4: Training Mode Integration
+**Goal**: Connect solver to training UI
 
-## Technical Achievements
-- O(N) timeline processing (was O(N²))
-- Proper all-in handling with stack awareness
-- Smart decimal formatting (100 not 100.0, but keeps 99.5)
-- Clean action labels without redundant "BB" suffix
-- Elegant BB edge case handling without hardcoding
+- [ ] Table simulation engine (mixed player types)
+- [ ] Real-time GTO comparison during play
+- [ ] EV difference display
+- [ ] Session statistics tracking
+- [ ] Leak detection and suggestions
+- [ ] Hand replay with solver analysis
+
+**Deliverable**: Complete training loop with AI opponents
+
+### Phase 5: GPU Acceleration (Future)
+**Goal**: JAX-based solver for maximum performance
+
+- [ ] Evaluate Pgx game environments
+- [ ] Migrate CFR to JAX
+- [ ] Implement MCCFR with jax.vmap
+- [ ] GPU memory management for different hardware
+- [ ] Dynamic bucketing based on GPU tier
+
+**Deliverable**: Real-time solving on consumer GPUs
+
+## Technical Decisions Made
+
+### Utility Biasing > Node Locking
+**Decision**: Use utility bias (GTO Wizard approach) instead of node-locking
+**Reason**: Node-locking creates robotic play; utility bias creates organic tendencies
+**Implementation**: Modify CFR regret formula: `regret = cfv - node_value + bias * pot`
+
+### RLCard as Game Engine
+**Decision**: Use RLCard instead of custom engine or OpenSpiel
+**Reason**: Full NLHE support, built-in CFR, active development, simpler than OpenSpiel
+
+### phevaluator for Hand Evaluation
+**Decision**: Use phevaluator instead of building custom evaluator
+**Reason**: 100KB lookup tables, nanosecond evaluation, battle-tested
+
+### Python Subprocess Communication
+**Decision**: Use subprocess with JSON-RPC over HTTP API
+**Reason**: Simpler bundling, no network overhead, better for desktop app
+
+## Known Issues / Blockers
+
+### Current
+- None - ready to begin Phase 1
+
+### Resolved
+- ~~Rust solver doesn't support exploitative profiles~~ → Pivoting to Python
+- ~~Node-locking creates brittle AI~~ → Using utility biasing instead
+
+## Research Findings
+
+### Libraries Evaluated
+| Library | Purpose | Decision |
+|---------|---------|----------|
+| RLCard | Game engine + CFR | **USE** |
+| OpenSpiel | Alternative engine | Backup (more complex) |
+| phevaluator | Hand evaluation | **USE** |
+| cfrx | JAX CFR | Future (Phase 5) |
+| Pgx | JAX game envs | Future (Phase 5) |
+| poker-hand-clustering | Card abstraction | **USE** |
+| postflop-solver (Rust) | Current solver | **DEPRECATE** |
+
+### Key Insights
+1. GTO Wizard's moat is their profile system, not the solver
+2. Utility bias propagates across entire game tree (unlike node-locking)
+3. Card abstraction is the speed lever (accuracy vs performance tradeoff)
+4. K-Means with EHS + EMD is state-of-the-art for abstraction
+5. Pluribus architecture validates multi-player biased solving
+
+## Metrics
+
+### Performance Targets
+- Solver response: < 2 seconds for common spots
+- Training mode: 60 FPS UI with < 500ms AI decisions
+- Card abstraction precompute: < 5 minutes startup
+
+### Quality Targets
+- Profile behavior matches target HUD stats (±5%)
+- CFR converges to < 1% exploitability with no bias
+- GTO strategy identical to reference solver
 
 ## Next Actions
-1. **Connect table settings to game engine** - Make settings actually affect gameplay
-2. **Restore range sliders** - Bring back quick initialization tools
-3. **Implement range persistence** - Save ranges at each node
-4. **Add position click handler** - View/edit ranges without action selection
-5. **Extend to postflop** - Continue simulation through all streets
-6. **Add board card selection** - UI for choosing flop/turn/river
 
-## Performance Notes
-- Timeline renders smoothly with 20+ actions
-- Drag navigation working well
-- No performance issues with current implementation
-- Ready for solver integration once ranges persist
+1. **Create Python backend structure**
+   - `src/backend/` directory
+   - `requirements.txt` with dependencies
+   - Basic `server.py` skeleton
+
+2. **Install and test RLCard**
+   - Verify NLHE environment works
+   - Test vanilla CFR implementation
+   - Understand CFR internals for modification
+
+3. **Build Electron-Python bridge**
+   - Subprocess spawning in `electron/pythonBridge.js`
+   - JSON-RPC protocol implementation
+   - Basic ping/pong communication test
+
+4. **Implement first profile**
+   - Start with "Fish" profile
+   - Modify CFR update step
+   - Verify increased calling frequency

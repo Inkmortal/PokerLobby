@@ -1,13 +1,240 @@
 # System Patterns
 
-## Betting Logic Implementation
+## Architecture Overview (Updated 2025-12-23)
+
+### Hybrid Python/TypeScript Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         FRONTEND LAYER                           │
+│                    (React + TypeScript + Electron)               │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐            │
+│  │ Range Builder│ │ Training UI  │ │ Profile Cfg  │            │
+│  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘            │
+│         └────────────────┼────────────────┘                     │
+│                          ▼                                       │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                    API Service Layer                       │  │
+│  │              (TypeScript - IPC/HTTP abstraction)           │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                    IPC / HTTP / Subprocess
+                               │
+┌─────────────────────────────────────────────────────────────────┐
+│                         BACKEND LAYER                            │
+│                           (Python)                               │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                   Poker Engine Service                     │  │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────┐  │  │
+│  │  │   RLCard    │ │ phevaluator │ │   Profile System    │  │  │
+│  │  │ (Game Env)  │ │ (Hand Eval) │ │ (Utility Biasing)   │  │  │
+│  │  └──────┬──────┘ └──────┬──────┘ └──────────┬──────────┘  │  │
+│  │         └───────────────┼───────────────────┘              │  │
+│  │                         ▼                                   │  │
+│  │  ┌───────────────────────────────────────────────────────┐ │  │
+│  │  │            Utility-Biased CFR Solver                   │ │  │
+│  │  │    (Modified regret minimization with profile bias)    │ │  │
+│  │  └───────────────────────────────────────────────────────┘ │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                Card Abstraction Layer                      │  │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────┐  │  │
+│  │  │ EHS Calc    │ │ K-Means     │ │ Bucket Manager      │  │  │
+│  │  │             │ │ Clustering  │ │ (Speed vs Accuracy) │  │  │
+│  │  └─────────────┘ └─────────────┘ └─────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Core Design Patterns
+
+### 1. Utility-Biased CFR Pattern
+
+The key innovation for exploitative training. Instead of node-locking (which creates brittle, robotic play), we modify the CFR regret update globally:
+
+```python
+class BiasedCFRSolver:
+    """CFR solver with utility bias for modeling player tendencies."""
+
+    def __init__(self, game_env, profile_biases: dict):
+        self.env = game_env
+        self.biases = profile_biases  # {"call": 0.08, "fold": -0.05, ...}
+
+    def update_regrets(self, node, action, cfv, node_value, pot_size):
+        """Modified regret update with utility bias."""
+        # Standard CFR regret
+        base_regret = cfv[action] - node_value
+
+        # Add utility bias (scaled by pot)
+        action_type = self.get_action_type(action)  # "call", "fold", "raise"
+        bias = self.biases.get(action_type, 0.0) * pot_size
+
+        # Biased regret drives strategy toward player archetype
+        return base_regret + bias
+```
+
+**Why this works:**
+- Fish "wants" to call → positive call bias → naturally calls too much
+- Nit "fears" action → positive fold bias → naturally folds too much
+- Whale "loves action" → negative fold bias → stays in pots too long
+- LAG "likes aggression" → positive raise bias → raises more than optimal
+
+### 2. Player Profile Pattern
+
+```python
+@dataclass
+class PlayerProfile:
+    """Defines exploitable tendencies for a player archetype."""
+    name: str
+    biases: Dict[str, float]  # Action type -> bias value
+    description: str
+
+    # Optional: HUD stat targets for validation
+    target_vpip: Optional[float] = None
+    target_pfr: Optional[float] = None
+    target_aggression: Optional[float] = None
+
+# Predefined archetypes
+PROFILES = {
+    "fish": PlayerProfile(
+        name="Fish",
+        biases={"call": +0.08, "fold": -0.05, "raise": -0.03},
+        description="Calls too much, doesn't fold enough",
+        target_vpip=45.0,
+        target_pfr=8.0,
+    ),
+    "nit": PlayerProfile(
+        name="Nit",
+        biases={"fold": +0.10, "call": -0.05, "raise": -0.08},
+        description="Folds too much, only plays premium hands",
+        target_vpip=12.0,
+        target_pfr=10.0,
+    ),
+    "whale": PlayerProfile(
+        name="Whale",
+        biases={"call": +0.15, "raise": +0.05, "fold": -0.20},
+        description="Loves action, hates folding, has money to burn",
+        target_vpip=55.0,
+    ),
+    "calling_station": PlayerProfile(
+        name="Calling Station",
+        biases={"call": +0.12, "fold": -0.15, "raise": -0.05},
+        description="Will call you down with anything",
+        target_vpip=40.0,
+        target_aggression=0.3,
+    ),
+    "lag": PlayerProfile(
+        name="LAG (Loose-Aggressive)",
+        biases={"raise": +0.10, "call": -0.05, "fold": -0.05},
+        description="Plays many hands aggressively",
+        target_vpip=30.0,
+        target_pfr=25.0,
+    ),
+    "maniac": PlayerProfile(
+        name="Maniac",
+        biases={"raise": +0.20, "call": -0.10, "fold": -0.15},
+        description="Raises everything, pure aggression",
+        target_pfr=40.0,
+    ),
+    "tag": PlayerProfile(
+        name="TAG (Tight-Aggressive)",
+        biases={"raise": +0.03, "fold": +0.02, "call": -0.02},
+        description="Solid player, slightly tight",
+        target_vpip=22.0,
+        target_pfr=18.0,
+    ),
+    "gto": PlayerProfile(
+        name="GTO",
+        biases={},  # No bias = equilibrium play
+        description="Game-theory optimal play",
+    ),
+}
+```
+
+### 3. Card Abstraction Pattern
+
+For real-time decisions, we bucket similar hands together:
+
+```python
+class CardAbstraction:
+    """K-Means clustering for hand bucketing based on EHS."""
+
+    def __init__(self, num_buckets: int = 10000):
+        self.num_buckets = num_buckets
+        self.bucket_map: Dict[str, int] = {}  # hand -> bucket_id
+
+    def compute_ehs(self, hand: Tuple[Card, Card], board: List[Card]) -> float:
+        """Expected Hand Strength against random opponent range."""
+        # Use phevaluator for fast equity calculation
+        return equity_calculator.evaluate(hand, board, opponent_range="random")
+
+    def build_buckets(self, street: str):
+        """Precompute buckets using K-Means on EHS distributions."""
+        all_hands = generate_all_hands()
+        ehs_values = [self.compute_ehs(h, []) for h in all_hands]
+
+        # K-Means clustering
+        kmeans = KMeans(n_clusters=self.num_buckets)
+        buckets = kmeans.fit_predict(ehs_values)
+
+        self.bucket_map = dict(zip(all_hands, buckets))
+```
+
+**Granularity tradeoffs:**
+- **High-end (50k+ buckets)**: Near-perfect accuracy, slower
+- **Standard (10k buckets)**: Good balance for training
+- **Fast mode (1k buckets)**: Real-time capable, less precise
+
+### 4. Table Simulation Pattern
+
+For training against mixed player types:
+
+```python
+class TableSimulator:
+    """Simulates a poker table with multiple player profiles."""
+
+    def __init__(self, num_seats: int = 6):
+        self.seats: List[PlayerProfile] = []
+        self.human_seat: int = 0
+        self.solver: BiasedCFRSolver = None
+
+    def configure_table(self, seat_profiles: Dict[int, str]):
+        """Set player types for each seat."""
+        for seat, profile_name in seat_profiles.items():
+            self.seats[seat] = PROFILES[profile_name]
+
+    def get_opponent_action(self, seat: int, game_state: GameState) -> Action:
+        """Get action from AI opponent based on their profile."""
+        profile = self.seats[seat]
+
+        # Solve with this player's biases
+        self.solver.set_biases(profile.biases)
+        strategy = self.solver.get_strategy(game_state)
+
+        # Sample action from strategy distribution
+        return self.sample_action(strategy)
+
+    def compare_to_gto(self, player_action: Action, game_state: GameState) -> dict:
+        """Compare player's action to GTO optimal."""
+        gto_solver = BiasedCFRSolver(biases={})  # No bias = GTO
+        gto_strategy = gto_solver.get_strategy(game_state)
+
+        return {
+            "player_action": player_action,
+            "gto_strategy": gto_strategy,
+            "ev_diff": self.calculate_ev_difference(player_action, gto_strategy),
+        }
+```
+
+## Betting Logic (Preserved from Original)
 
 ### Raise Counting System
 - **raiseCount** field tracks actual number of raises/bets per street
 - Preflop starts at 1 (blinds count as first bet)
 - Postflop starts at 0 (no bets yet)
 - Increments on any aggressive action (open, bet, raise, all-in if raising)
-- Used to determine what betting level comes next
 
 ### Betting Level Mapping
 ```
@@ -25,249 +252,135 @@ Postflop:
 ```
 
 ### Solver Thresholds
-1. **addAllInThreshold** (default 150%)
-   - Adds all-in option when max bet/pot ratio < threshold
-   - Ensures all-in is available in large pot situations
+1. **addAllInThreshold** (default 150%): Adds all-in when max bet/pot ratio < threshold
+2. **forceAllInThreshold** (default 20%): Converts bets to all-in based on SPR
+3. **mergingThreshold** (default 10%): Merges similar bet sizes
 
-2. **forceAllInThreshold** (default 20%)
-   - Converts bets to all-in based on SPR after opponent calls
-   - Formula: SPR after call = remaining stack / new pot
-   - If SPR < threshold, replace bet with all-in
+## Communication Patterns
 
-3. **mergingThreshold** (default 10%)
-   - Merges similar bet sizes to reduce complexity
-   - Formula: (100 + X) / (100 + Y) < 1.0 + threshold
+### Electron ↔ Python Bridge
 
-## Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Electron Main Process                 │
-│  - Window Management                                     │
-│  - File System Access                                    │
-│  - Native Menus                                         │
-└────────────────────┬────────────────────────────────────┘
-                     │ IPC
-┌────────────────────▼────────────────────────────────────┐
-│                   Electron Renderer                      │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │                 React Application                │   │
-│  │  ┌───────────┐ ┌───────────┐ ┌───────────┐    │   │
-│  │  │  Solver   │ │  Training │ │   Lobby   │    │   │
-│  │  │    UI     │ │   Drills  │ │ Multiplayer│    │   │
-│  │  └─────┬─────┘ └─────┬─────┘ └─────┬─────┘    │   │
-│  │        │             │             │            │   │
-│  │  ┌─────▼─────────────▼─────────────▼─────┐    │   │
-│  │  │          Core Services Layer           │    │   │
-│  │  │  - State Management (Redux/Zustand)    │    │   │
-│  │  │  - Data Persistence (SQLite)           │    │   │
-│  │  │  - WebSocket Client                    │    │   │
-│  │  └─────┬───────────────────────────────┘  │    │   │
-│  │        │                                   │    │   │
-│  │  ┌─────▼───────────────────────────────┐  │    │   │
-│  │  │    WebAssembly Solver Module        │  │    │   │
-│  │  │  - C++ Solver Compiled to WASM      │  │    │   │
-│  │  │  - TypeScript Bindings              │  │    │   │
-│  │  │  - Worker Thread Execution          │  │    │   │
-│  │  └─────────────────────────────────────┘  │    │   │
-│  └─────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────┘
-```
-
-## Component Patterns
-
-### Solver Architecture
+**Option A: Subprocess with JSON-RPC**
 ```typescript
-interface SolverConfig {
-  gameType: 'NLHE' | 'PLO';
-  stakes: StakeLevel;
-  players: PlayerConfig[];
-  board: Card[];
-  betSizings: BetSizing[];
+// TypeScript side
+class PythonBridge {
+    private process: ChildProcess;
+
+    async call(method: string, params: any): Promise<any> {
+        const request = JSON.stringify({ method, params, id: uuid() });
+        this.process.stdin.write(request + '\n');
+        return this.waitForResponse();
+    }
 }
 
-class SolverService {
-  private wasmModule: WASMSolver;
-  private workerPool: Worker[];
-  
-  async solve(config: SolverConfig): Promise<Solution>;
-  async cancel(): void;
-  getProgress(): number;
-}
+// Python side
+class JsonRpcServer:
+    def handle_request(self, request: dict):
+        method = request['method']
+        params = request['params']
+
+        if method == 'solve':
+            return self.solver.solve(**params)
+        elif method == 'get_strategy':
+            return self.solver.get_strategy(**params)
 ```
 
-### State Management Pattern
-Using Redux Toolkit or Zustand for:
-- Solver configuration state
-- Solution cache
-- Training progress
-- User preferences
-- Hand history database
+**Option B: FastAPI HTTP Server**
+```python
+from fastapi import FastAPI
 
-### Data Flow
-1. **User Input** → React Component
-2. **Action Dispatch** → State Manager
-3. **State Update** → Component Re-render
-4. **Heavy Computation** → WebAssembly Worker
-5. **Result** → State Update → UI Update
+app = FastAPI()
 
-## Key Design Patterns
+@app.post("/solve")
+async def solve(config: SolverConfig):
+    return solver.solve(config)
 
-### 1. Worker Thread Pattern for Solver
-```typescript
-// Main thread
-const solver = new Worker('./solver.worker.js');
-solver.postMessage({ type: 'SOLVE', config });
-solver.onmessage = (e) => {
-  if (e.data.type === 'PROGRESS') updateProgress(e.data.value);
-  if (e.data.type === 'SOLUTION') displaySolution(e.data.solution);
-};
-
-// Worker thread
-self.onmessage = async (e) => {
-  if (e.data.type === 'SOLVE') {
-    const solution = await wasmSolver.solve(e.data.config);
-    self.postMessage({ type: 'SOLUTION', solution });
-  }
-};
+@app.post("/strategy")
+async def get_strategy(game_state: GameState, profile: str):
+    return solver.get_strategy(game_state, PROFILES[profile])
 ```
 
-### 2. Repository Pattern for Data Access
-```typescript
-interface HandHistoryRepository {
-  save(hands: Hand[]): Promise<void>;
-  query(filters: FilterOptions): Promise<Hand[]>;
-  aggregate(metric: AggregateType): Promise<Stats>;
-}
+## Data Flow Patterns
 
-class SQLiteHandRepository implements HandHistoryRepository {
-  // Implementation using SQLite
-}
+### Training Session Flow
+```
+1. User configures table (seat assignments, profiles)
+2. Frontend sends table config to Python backend
+3. Backend initializes solvers for each seat profile
+4. Game loop:
+   a. Deal cards (frontend)
+   b. For each decision point:
+      - Get AI actions from backend (profile-biased)
+      - Player makes decision (frontend)
+      - Compare to GTO (backend)
+      - Update statistics (frontend)
+   c. Complete hand, update session stats
+5. End session, show performance report
 ```
 
-### 3. Strategy Pattern for Import Parsers
-```typescript
-interface HandHistoryParser {
-  canParse(content: string): boolean;
-  parse(content: string): Hand[];
-}
-
-class PokerStarsParser implements HandHistoryParser {}
-class GGPokerParser implements HandHistoryParser {}
-
-class ImportService {
-  private parsers: HandHistoryParser[] = [
-    new PokerStarsParser(),
-    new GGPokerParser(),
-  ];
-  
-  import(content: string): Hand[] {
-    const parser = this.parsers.find(p => p.canParse(content));
-    return parser.parse(content);
-  }
-}
+### Solver Request Flow
 ```
-
-### 4. Observable Pattern for Real-time Updates
-```typescript
-class SolverProgress extends EventEmitter {
-  updateProgress(percent: number) {
-    this.emit('progress', percent);
-  }
-  
-  complete(solution: Solution) {
-    this.emit('complete', solution);
-  }
-}
+Frontend                    Backend
+   │                           │
+   ├──solve(state, profile)───►│
+   │                           ├── Load profile biases
+   │                           ├── Apply card abstraction
+   │                           ├── Run biased CFR
+   │                           ├── Extract strategy
+   │◄──strategy distribution───┤
+   │                           │
 ```
 
 ## Performance Patterns
 
-### WebAssembly Optimization
-- Load WASM module once at startup
-- Keep in memory for entire session
-- Use SharedArrayBuffer for large data
-- Implement progress callbacks
+### Caching Strategy
+```python
+class SolutionCache:
+    """LRU cache for solved game states."""
 
-### React Performance
-- Memoize expensive computations
-- Virtual scrolling for large lists
-- Lazy load heavy components
-- Code splitting by route
+    def __init__(self, max_size: int = 10000):
+        self.cache = OrderedDict()
+        self.max_size = max_size
 
-### Data Management
-- Index SQLite properly for queries
-- Batch inserts for hand histories
-- Cache frequently accessed solutions
-- Compress stored solutions
+    def get_key(self, state: GameState, profile: str) -> str:
+        """Create unique key from state + profile."""
+        return f"{state.hash()}:{profile}"
 
-## Security Patterns
+    def get(self, state: GameState, profile: str) -> Optional[Strategy]:
+        key = self.get_key(state, profile)
+        if key in self.cache:
+            self.cache.move_to_end(key)
+            return self.cache[key]
+        return None
+```
 
-### Local-First Security
-- All data stored locally
-- No external API calls for solving
-- Encrypted local storage for sensitive data
-- Sanitize imported hand histories
-
-### WebAssembly Sandboxing
-- WASM runs in isolated environment
-- No direct file system access
-- Memory-safe by design
-- Controlled through TypeScript API
+### Lazy Solving
+- Only solve when user reaches decision point
+- Pre-solve common spots in background
+- Cache solutions for repeated positions
 
 ## Testing Patterns
 
-### Component Testing
-```typescript
-// React Testing Library
-test('SolverConfig updates bet sizings', () => {
-  render(<SolverConfig />);
-  // Test implementation
-});
+### Profile Validation
+```python
+def validate_profile(profile: PlayerProfile, num_hands: int = 10000):
+    """Validate that profile produces expected HUD stats."""
+    simulator = HeadsUpSimulator(profile, PROFILES['gto'])
+    stats = simulator.run(num_hands)
+
+    if profile.target_vpip:
+        assert abs(stats.vpip - profile.target_vpip) < 5.0
+    if profile.target_pfr:
+        assert abs(stats.pfr - profile.target_pfr) < 5.0
 ```
 
-### Integration Testing
-```typescript
-// Solver integration
-test('Solver returns valid solution', async () => {
-  const solution = await solver.solve(mockConfig);
-  expect(solution).toMatchSchema(solutionSchema);
-});
+### CFR Convergence Testing
+```python
+def test_cfr_convergence():
+    """Verify CFR converges to equilibrium with no bias."""
+    solver = BiasedCFRSolver(biases={})
+    solver.train(iterations=10000)
+
+    exploitability = solver.compute_exploitability()
+    assert exploitability < 0.01  # Less than 1% exploitable
 ```
-
-### E2E Testing
-```typescript
-// Playwright/Cypress
-test('Complete solver workflow', async ({ page }) => {
-  await page.goto('/solver');
-  // Test full workflow
-});
-```
-
-## Error Handling Patterns
-
-### Graceful Degradation
-- Fallback UI for WASM load failure
-- Offline mode for multiplayer
-- Partial imports for corrupted files
-- Default ranges for missing data
-
-### User Feedback
-- Toast notifications for actions
-- Progress bars for long operations
-- Clear error messages
-- Retry mechanisms
-
-## Deployment Patterns
-
-### Electron Distribution
-- Auto-updater for patches
-- Code signing for security
-- Platform-specific builds
-- Portable vs installed versions
-
-### Asset Management
-- Bundle WASM with app
-- Lazy load heavy assets
-- CDN for future web version
-- Local caching strategies

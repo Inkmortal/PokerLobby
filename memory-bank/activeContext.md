@@ -1,142 +1,157 @@
 # Active Context
 
 ## Current Focus
-Range Builder betting logic complete! All betting levels (2-bet through 6-bet+) working correctly with proper raise counting. Table settings fully integrated with game engine. Ready to add range persistence and postflop functionality.
+**MAJOR ARCHITECTURE PIVOT**: Transitioning from Rust-only solver to hybrid Python/Rust architecture to support exploitative training against population-modeled opponents (fish, nits, whales, LAGs, calling stations).
 
-## Technology Decisions Made
-- **Frontend**: React + TypeScript (chosen for AI coding efficiency and mature ecosystem)
-- **Desktop**: Electron (chosen over Tauri for stability)
-- **Solver**: Postflop-solver (Rust) - superior performance to TexasSolver
-- **Backend**: Native Rust binary compiled to .node module (NOT WASM)
-- **Native Bindings**: napi-rs for direct Node.js integration
-- **No Server-Side Solving**: All computation happens client-side
-- **Database**: SQLite for local storage
-- **Mobile**: React Native Web + Expo (future consideration)
+The core insight: GTO training tools need to simulate realistic opponents, not just GTO vs GTO. Training against player archetypes with population tendencies is essential for practical skill development.
 
-## Next Immediate Steps
-1. ✅ ~~Copy postflop-solver Rust code into project~~ DONE
-2. ✅ ~~Set up React + TypeScript + Electron project structure~~ DONE
-3. ✅ ~~Create Rust-to-JS communication layer~~ DONE
-4. Compile native solver module: `cd src/solver/rust && npm install && npm run build`
-5. Wire up Electron main process to load native solver
-6. Build Range Builder UI component
-7. Build Solver Configuration UI
-8. Import standard preflop ranges (GTO Wizard free/purchased)
+## Architecture Decision (2025-12-23)
 
-## Key Patterns and Preferences
+### Why We're Pivoting
+1. **Current Rust solver (postflop-solver)** is postflop-only, 2-player focused
+2. **No exploitative profile support** - only node-locking (brittle, robotic play)
+3. **Can't model opponent types** - fish who call too much, nits who fold too much
+4. **Training requires dynamic opponents** - not static GTO strategies
 
-### Development Approach
-- Solver-first development (most important to user)
-- Client-side only (no server dependencies)
-- Clean UI is paramount (addressing market gap)
-- TypeScript for everything (better for AI assistance)
+### New Hybrid Architecture
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    PokerLobby Frontend                       │
+│                  (React + TypeScript - KEEP)                 │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     Python Backend                           │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐ │
+│  │   RLCard        │  │   phevaluator   │  │  Custom      │ │
+│  │   (Game Engine  │  │   (Hand Eval)   │  │  Profile     │ │
+│  │    + CFR Base)  │  │                 │  │  System      │ │
+│  └─────────────────┘  └─────────────────┘  └──────────────┘ │
+│                              │                               │
+│  ┌───────────────────────────┴───────────────────────────┐  │
+│  │              Utility-Biased CFR Solver                 │  │
+│  │         (Modified regret minimization formula)         │  │
+│  └────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Electron IPC Bridge                        │
+│              (Python subprocess or HTTP API)                 │
+└─────────────────────────────────────────────────────────────┘
+```
 
-### UI/UX Principles
-- Minimalist design over feature-rich interfaces
-- Visual feedback over text explanations
-- Dark mode by default with light mode option
-- Smooth animations without being distracting
+## Technology Decisions
 
-### Code Organization
-- Component-based architecture
-- Clear separation between solver, UI, and game logic
-- TypeScript interfaces for all data structures
-- Functional components with hooks
+### Keeping
+- **Frontend**: React + TypeScript (working well)
+- **Desktop**: Electron (stable)
+- **UI Components**: Range Builder, ActionSequenceBar, etc.
 
-## Recent Decisions and Rationale
+### Adding
+- **Python Backend**: RLCard + phevaluator + custom profile system
+- **Game Engine**: RLCard (supports NLHE, has CFR implementation)
+- **Hand Evaluator**: phevaluator (100KB lookup tables, nanosecond eval)
+- **Profile System**: Custom utility-bias implementation (GTO Wizard-style)
 
-### Why Postflop-Solver over TexasSolver
-- 2x faster performance in benchmarks
-- Better memory efficiency (16-bit compression)
-- Cleaner Rust codebase
-- Already has WASM version working
-- More accurate CFR implementation
+### Deprecating
+- **Rust postflop-solver**: Keep for reference, but not primary engine
+- **Native Node bindings**: Replace with Python subprocess/HTTP
 
-### Dynamic Game Configuration Strategy
-- **Not hardcoded for 6-max**: System supports ANY configuration
-- **User-defined parameters**:
-  - Table size (2-10 players)
-  - Stack depths (10bb-1000bb)
-  - Rake structure (%, cap, no rake)
-  - Custom bet sizings per street
-  - Ante/straddle/BB ante
-- **Tree construction**: Build game trees dynamically based on parameters
-- **Solving approach**:
-  - Postflop: Real-time solving with custom trees
-  - Preflop: Initially pre-computed, later dynamic generation
-- **Future preflop solver**: Will generate optimal ranges based on ALL parameters (stack size, rake, etc.)
+## Key Concepts
 
-### Why Native Rust Binary
-- Full performance (no WASM overhead)
-- Simpler implementation
-- Can add WASM later for web
+### Utility-Biased CFR (vs Node-Locking)
+Instead of hard constraints at specific nodes, we modify the regret formula globally:
 
-## Important Considerations
+```python
+# Standard CFR: minimize regret R
+# Biased CFR: minimize R + bias_tensor
 
-### Performance Requirements
-- Solver must respond in < 2 seconds for common spots
-- UI must maintain 60fps during animations
-- Support importing 100k+ hands
-- WebAssembly initialization must be fast
+PROFILES = {
+    "fish": {"call": +0.08, "fold": -0.05, "raise": -0.03},
+    "nit": {"fold": +0.10, "call": -0.05, "raise": -0.08},
+    "whale": {"call": +0.15, "raise": +0.05, "fold": -0.20},
+    "calling_station": {"call": +0.12, "fold": -0.15},
+    "lag": {"raise": +0.10, "call": -0.05, "fold": -0.05},
+    "maniac": {"raise": +0.20, "call": -0.10},
+}
 
-### User Experience Goals
-- First-time user can use solver within 1 minute
-- No account/registration required
-- Works offline after initial download
-- Responsive on all screen sizes
+# Apply during CFR update step:
+regret[action] = cfv[action] - node_value + bias[action] * pot
+```
 
-## Current Blockers
-None - solver code integrated, ready to compile and build UI
+This creates organic, exploitable play patterns rather than robotic forced actions.
 
-## Recent Progress (2025-08-15)
-- **COMPLETE**: Fixed all betting logic bugs
-  - Proper raise counting system (raiseCount field)
-  - All-in appears correctly for 6-bet+ situations
-  - SPR-based forceAllInThreshold implementation
-  - Call option shows when call amount exceeds stack
-  - No more duplicate all-ins
-- **COMPLETE**: Table settings integration
-  - Settings changes now update game engine in real-time
-  - Position-specific overrides working
-  - Solver thresholds (add/force all-in, merging) implemented
-- **COMPLETE**: UI improvements
-  - Removed drag scrolling from ActionSequenceBar
-  - Added beautiful custom scrollbar with hover states
-  - Smooth scrolling with visual feedback
+### Why This Matters for Training
+- **GTO Wizard charges $39-100/month** for profile-based training
+- **Real opponents aren't GTO** - they have exploitable tendencies
+- **Learning to exploit** is as important as learning GTO
+- **Population data** tells us how player types actually behave
 
-## Recent Progress (2025-08-13)
-- Created unified codebase architecture
-- Single frontend codebase for web + Electron
-- API layer updated for native solver (NOT WASM)
-- Electron configured with proper IPC handlers
-- Shared types for entire application
-- Positions corrected to: UTG, UTG+1, HJ, LJ, CO, BTN, SB, BB
-- **MAJOR**: Complete postflop-solver source code integrated
-- **MAJOR**: Native Node.js bindings created with napi-rs
-- **MAJOR**: NativeSolver class wrapping PostFlopGame functionality
+## Refactoring Phases
+
+### Phase 1: Foundation (Current Priority)
+- [ ] Set up Python backend with RLCard
+- [ ] Install phevaluator for hand evaluation
+- [ ] Create Electron ↔ Python bridge (subprocess or HTTP)
+- [ ] Basic game state communication
+
+### Phase 2: Profile System
+- [ ] Define player archetypes with utility biases
+- [ ] Modify RLCard's CFR to accept bias tensors
+- [ ] Build profile configuration UI in frontend
+- [ ] Test exploitative solving
+
+### Phase 3: Card Abstraction (For Speed)
+- [ ] Implement EHS (Expected Hand Strength) calculator
+- [ ] Build K-Means clustering for hand bucketing
+- [ ] Configurable granularity (accuracy vs speed tradeoff)
+
+### Phase 4: Training Mode
+- [ ] Table simulation with mixed player types
+- [ ] Real-time GTO comparison during play
+- [ ] Session statistics and leak detection
+
+### Phase 5: GPU Acceleration (Future)
+- [ ] Migrate CFR to JAX using Pgx environments
+- [ ] MCCFR with jax.vmap for vectorization
+- [ ] Support for different GPU tiers (4090 vs 3060)
+
+## Open Questions
+
+1. **Python integration method**: Subprocess with JSON IPC vs FastAPI HTTP server?
+2. **Keep Rust solver?**: Could maintain for pure GTO postflop analysis
+3. **Profile complexity**: Start with 5-6 archetypes or full custom parameters?
+4. **Real-time requirements**: How fast do training decisions need to be?
+
+## Research Findings
+
+### Libraries Evaluated
+| Library | Purpose | Decision |
+|---------|---------|----------|
+| [RLCard](https://github.com/datamllab/rlcard) | Game engine + CFR | USE - Full NLHE support |
+| [OpenSpiel](https://github.com/google-deepmind/open_spiel) | Alternative engine | BACKUP - More complex |
+| [phevaluator](https://github.com/HenryRLee/PokerHandEvaluator) | Hand evaluation | USE - Fast, Python bindings |
+| [cfrx](https://github.com/Egiob/cfrx) | JAX CFR | FUTURE - Only Kuhn/Leduc now |
+| [Pgx](https://github.com/sotetsuk/pgx) | JAX game envs | FUTURE - GPU acceleration |
+| [poker-hand-clustering](https://github.com/sammiya/poker-hand-clustering) | Card abstraction | USE - K-Means EHS |
+
+### GTO Wizard's Approach (What We're Copying)
+From [their blog](https://blog.gtowizard.com/profiles_explained_modeling_exploitable_opponents/):
+- **Action Incentives**: Virtual bonuses/penalties on Check/Bet/Fold/Call
+- **Global Propagation**: Biases apply across entire game tree
+- **Percentage-Based**: e.g., "+5% pot incentive to calling"
+- **EV-Neutral Solving**: Incentives influence computation but removed from final EV
 
 ## Learning and Insights
-- Existing poker software (GTO Wizard, PioSolver, MonkerSolver) has significant UX issues
-- GTO Wizard charges $39-100/month for subscription
-- Users want to own their solver, not rent it
-- Clean UI is a major differentiator in this market
-- Population-based training is underserved
-- Most training is GTO vs GTO, but players want to exploit real opponents
-- Node-locking enables exploitative solving against specific tendencies
-- Postflop-solver already supports node-locking functionality
-- CFR algorithm works identically for preflop and postflop (just different tree sizes)
-- Storing player profiles with ranges makes preflop solving 100x-1000x faster
-- Can solve "best response vs profiles" instead of full equilibrium
 
-## Project-Specific Patterns
-- All solving happens client-side (native Rust binary for desktop)
-- Electron app with potential future mobile expansion
-- Dynamic game tree construction based on user parameters
-- Focus on solver functionality before training features
-- MMR/multiplayer is stretch goal, not MVP
+- **Node-locking is brittle** - creates robotic, exploitable AI
+- **Utility bias is organic** - AI "wants" to play a certain way
+- **GTO Wizard's moat** is their profile system, not their solver
+- **RLCard already has CFR** - we just need to modify the update step
+- **phevaluator is battle-tested** - used in production poker software
+- **Card abstraction is the speed lever** - more buckets = more accurate but slower
 
-## Questions to Resolve
-- Preferred UI styling approach (CSS modules, styled-components, Tailwind?)
-- Initial target poker variant (NLHE cash games, but system supports any)
-- Specific hand history formats to support first (Ignition, PokerTracker4)
-- Preflop range sources (GTO Wizard free ranges, purchase, or generate?)
+## Current Blockers
+None - ready to begin Phase 1 implementation
